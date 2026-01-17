@@ -5,115 +5,11 @@ const path = require("path");
 const fs = require("fs");
 const express = require("express");
 const cors = require("cors");
-const { PosPrinter } = require("electron-pos-printer");
 
-// Setup logging ke file
-const LOG_DIR = path.join(__dirname, "logs");
-const MAX_LOG_SIZE = 5 * 1024 * 1024; // 5MB per file
-const MAX_LOG_FILES = 5; // keep 5 files max
+const logger = require("./utils/logger");
+const printerService = require("./services/printerService");
 
-// Pastikan folder logs ada
-if (!fs.existsSync(LOG_DIR)) {
-  fs.mkdirSync(LOG_DIR, { recursive: true });
-}
-
-function getLogFileName() {
-  const today = new Date().toISOString().split("T")[0]; // YYYY-MM-DD
-  return path.join(LOG_DIR, `bridge-${today}.log`);
-}
-
-function rotateLogsIfNeeded(logFile) {
-  try {
-    if (fs.existsSync(logFile)) {
-      const stats = fs.statSync(logFile);
-      if (stats.size > MAX_LOG_SIZE) {
-        // Rotate: rename current file dengan timestamp
-        const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-        const rotatedFile = logFile.replace(".log", `-${timestamp}.log`);
-        fs.renameSync(logFile, rotatedFile);
-
-        // Cleanup old files (keep only MAX_LOG_FILES)
-        const logFiles = fs
-          .readdirSync(LOG_DIR)
-          .filter((f) => f.startsWith("bridge-") && f.endsWith(".log"))
-          .map((f) => ({
-            name: f,
-            path: path.join(LOG_DIR, f),
-            time: fs.statSync(path.join(LOG_DIR, f)).mtime.getTime(),
-          }))
-          .sort((a, b) => b.time - a.time);
-
-        // Delete old files
-        if (logFiles.length > MAX_LOG_FILES) {
-          logFiles.slice(MAX_LOG_FILES).forEach((file) => {
-            try {
-              fs.unlinkSync(file.path);
-            } catch (e) {
-              // ignore
-            }
-          });
-        }
-      }
-    }
-  } catch (e) {
-    // ignore rotation errors
-  }
-}
-
-function formatLogMessage(level, ...args) {
-  const timestamp = new Date().toISOString();
-  const message = args
-    .map((arg) => {
-      if (typeof arg === "object") {
-        try {
-          return JSON.stringify(arg);
-        } catch {
-          return String(arg);
-        }
-      }
-      return String(arg);
-    })
-    .join(" ");
-  return `[${timestamp}] [${level}] ${message}\n`;
-}
-
-const logger = {
-  log: (...args) => {
-    const msg = formatLogMessage("INFO", ...args);
-    const logFile = getLogFileName();
-    rotateLogsIfNeeded(logFile);
-    try {
-      fs.appendFileSync(logFile, msg, "utf8");
-    } catch (e) {
-      // fallback to console if file write fails
-      console.error("[logger] Failed to write log:", e);
-    }
-    console.log(...args); // tetap output ke console
-  },
-  warn: (...args) => {
-    const msg = formatLogMessage("WARN", ...args);
-    const logFile = getLogFileName();
-    rotateLogsIfNeeded(logFile);
-    try {
-      fs.appendFileSync(logFile, msg, "utf8");
-    } catch (e) {
-      console.error("[logger] Failed to write log:", e);
-    }
-    console.warn(...args);
-  },
-  error: (...args) => {
-    const msg = formatLogMessage("ERROR", ...args);
-    const logFile = getLogFileName();
-    rotateLogsIfNeeded(logFile);
-    try {
-      fs.appendFileSync(logFile, msg, "utf8");
-    } catch (e) {
-      console.error("[logger] Failed to write log:", e);
-    }
-    console.error(...args);
-  },
-};
-
+// Configuration
 const PORT = Number(process.env.PRINT_BRIDGE_PORT || 1818);
 const API_KEY = process.env.PRINT_BRIDGE_KEY || "dev-secret-key";
 const ALLOW_ALL_ORIGINS =
@@ -126,11 +22,13 @@ const ALLOWED_ORIGINS = (process.env.PRINT_BRIDGE_ALLOWED_ORIGINS || "")
   .map((s) => s.trim())
   .filter(Boolean);
 
+// Routes
+const printersRouter = require("./routes/printers");
+const printRouter = require("./routes/print");
+const templatesRouter = require("./routes/templates");
+
 let tray = null;
 let hiddenWin = null;
-let printerCache = null;
-let printerCacheTime = null;
-const PRINTER_CACHE_TTL = 5000; // cache 5 detik
 
 function createHiddenWindow() {
   hiddenWin = new BrowserWindow({
@@ -141,15 +39,25 @@ function createHiddenWindow() {
     },
   });
 
+  // Load blank page untuk memastikan webContents ready
+  // getPrintersAsync() memerlukan webContents yang sudah loaded
+  hiddenWin.loadURL("about:blank");
+
+  // Set window ke printer service langsung setelah dibuat
+  // Ini memastikan window tersedia untuk printerService
+  printerService.setHiddenWindow(hiddenWin);
+
   hiddenWin.webContents.once("did-finish-load", () => {
     logger.log("[bridge] Hidden window ready for printer detection");
+    // Set lagi untuk memastikan (jika window di-recreate)
+    printerService.setHiddenWindow(hiddenWin);
   });
 }
 
 function createTray() {
-  const iconPath = path.join(__dirname, "icon.png");
+  const iconPath = path.join(__dirname, "icon.webp");
   if (!fs.existsSync(iconPath)) {
-    logger.warn("[bridge] icon.png not found, skipping tray");
+    logger.warn("[bridge] icon.webp not found, skipping tray");
     return;
   }
 
@@ -161,41 +69,6 @@ function createTray() {
   ]);
   tray.setToolTip("POS Print Bridge");
   tray.setContextMenu(menu);
-}
-
-// Helper: get printers dengan retry jika hiddenWin belum ready
-async function getPrintersWithRetry(maxRetries = 3, delayMs = 500) {
-  for (let i = 0; i < maxRetries; i++) {
-    if (!hiddenWin) {
-      if (i < maxRetries - 1) {
-        logger.log(
-          `[bridge] Hidden window not ready, retrying... (${
-            i + 1
-          }/${maxRetries})`
-        );
-        await new Promise((resolve) => setTimeout(resolve, delayMs));
-        continue;
-      }
-      throw new Error("Hidden window not ready after retries");
-    }
-
-    try {
-      const printers = await hiddenWin.webContents.getPrintersAsync();
-      return printers;
-    } catch (e) {
-      if (i < maxRetries - 1) {
-        logger.log(
-          `[bridge] Failed to get printers, retrying... (${
-            i + 1
-          }/${maxRetries}):`,
-          e?.message || e
-        );
-        await new Promise((resolve) => setTimeout(resolve, delayMs));
-        continue;
-      }
-      throw e;
-    }
-  }
 }
 
 function makeCorsOptions() {
@@ -249,181 +122,32 @@ function startServer() {
 
     const key = req.header("X-API-KEY");
     if (key !== API_KEY) {
-      return res.status(401).json({ ok: false, message: "Unauthorized" });
+      return res.status(401).json({
+        ok: false,
+        error: {
+          code: "UNAUTHORIZED",
+          message: "Unauthorized",
+        },
+      });
     }
     next();
   });
 
-  // 4) list printers (dengan cache & retry)
-  server.get("/printers", async (_req, res) => {
-    try {
-      // Cek cache dulu (jika masih valid)
-      const now = Date.now();
-      if (
-        printerCache &&
-        printerCacheTime &&
-        now - printerCacheTime < PRINTER_CACHE_TTL
-      ) {
-        logger.log(
-          `[bridge] GET /printers -> ${printerCache.length} printers (cached)`
-        );
-        return res.json({ ok: true, printers: printerCache, cached: true });
-      }
+  // 4) Register routes
+  server.use("/printers", printersRouter);
+  server.use("/print", printRouter);
+  server.use("/templates", templatesRouter);
 
-      // Get fresh data dengan retry
-      logger.log("[bridge] GET /printers -> fetching printers...");
-      const printers = await getPrintersWithRetry();
-
-      // Update cache
-      printerCache = printers;
-      printerCacheTime = now;
-
-      logger.log(
-        `[bridge] GET /printers -> ${printers.length} printer(s) found:`,
-        printers
-          .map((p) => p.name || p.displayName || "(unnamed)")
-          .join(", ") || "(none)"
-      );
-
-      res.json({ ok: true, printers, cached: false });
-    } catch (e) {
-      logger.error("[bridge] GET /printers failed:", e);
-      res.status(500).json({
-        ok: false,
-        message: String(e?.message || e),
-        hint: "Pastikan hidden window sudah ready dan printer terdeteksi sistem",
-      });
-    }
-  });
-
-  // 5) test print (lebih informatif & rapi)
-  server.post("/test-print", async (req, res) => {
-    try {
-      const { printerName } = req.body || {};
-      const options = {
-        silent: true,
-        preview: false,
-        copies: 1,
-        printerName: printerName || undefined,
-        margin: "0 0 0 0",
-        timeOutPerLine: 1200,
-        pageSize: "80mm",
-      };
-
-      const now = new Date().toLocaleString("id-ID");
-
-      const data = [
-        {
-          type: "text",
-          value: "POS PRINT BRIDGE",
-          style: {
-            textAlign: "center",
-            fontSize: "18px",
-            fontWeight: "700",
-          },
-        },
-        {
-          type: "text",
-          value: "=== TEST PRINT ===",
-          style: {
-            textAlign: "center",
-            fontSize: "14px",
-            fontWeight: "700",
-          },
-        },
-        {
-          type: "text",
-          value: "--------------------------------",
-          style: { textAlign: "center", fontSize: "10px" },
-        },
-        {
-          type: "text",
-          value: `Waktu   : ${now}`,
-          style: { fontSize: "12px" },
-        },
-        {
-          type: "text",
-          value: `Printer : ${printerName || "(default)"}`,
-          style: { fontSize: "12px" },
-        },
-        {
-          type: "text",
-          value: "--------------------------------",
-          style: { textAlign: "center", fontSize: "10px" },
-        },
-        {
-          type: "text",
-          value: "Jika struk ini tercetak:",
-          style: { fontSize: "12px", fontWeight: "700" },
-        },
-        {
-          type: "text",
-          value: "- Koneksi bridge OK",
-          style: { fontSize: "12px" },
-        },
-        {
-          type: "text",
-          value: "- API key & CORS OK",
-          style: { fontSize: "12px" },
-        },
-        {
-          type: "text",
-          value: "- Printer responsif",
-          style: { fontSize: "12px" },
-        },
-        {
-          type: "text",
-          value: "--------------------------------",
-          style: { textAlign: "center", fontSize: "10px" },
-        },
-        {
-          type: "text",
-          value: "Terima kasih telah menggunakan",
-          style: { textAlign: "center", fontSize: "11px" },
-        },
-        {
-          type: "text",
-          value: "POS Print Bridge",
-          style: {
-            textAlign: "center",
-            fontSize: "12px",
-            fontWeight: "700",
-          },
-        },
-      ];
-
-      logger.log("[bridge] TEST PRINT ->", options.printerName || "(default)");
-      await PosPrinter.print(data, options);
-
-      res.json({ ok: true });
-    } catch (e) {
-      logger.error("[bridge] test-print failed:", e);
-      res.status(500).json({ ok: false, message: String(e?.message || e) });
-    }
-  });
-
-  // 6) print endpoint
-  server.post("/print", async (req, res) => {
-    try {
-      const { data, options } = req.body || {};
-      if (!Array.isArray(data) || typeof options !== "object" || !options) {
-        return res.status(400).json({ ok: false, message: "Invalid payload" });
-      }
-
-      logger.log(
-        "[bridge] PRINT ->",
-        options?.printerName || "(default)",
-        "items:",
-        data.length
-      );
-
-      await PosPrinter.print(data, options);
-      res.json({ ok: true });
-    } catch (e) {
-      logger.error("[bridge] print failed:", e);
-      res.status(500).json({ ok: false, message: String(e?.message || e) });
-    }
-  });
+  // Debug: Log semua registered routes
+  logger.log("[bridge] Registered routes:");
+  logger.log("  - GET  /health");
+  logger.log("  - GET  /printers");
+  logger.log("  - GET  /templates");
+  logger.log("  - GET  /templates/:id");
+  logger.log("  - POST /print");
+  logger.log("  - POST /print/invoice");
+  logger.log("  - POST /print/validate");
+  logger.log("  - POST /print/test-print");
 
   server.listen(PORT, "127.0.0.1", () => {
     logger.log(`[bridge] listening on http://127.0.0.1:${PORT}`);
@@ -436,7 +160,14 @@ function startServer() {
           : "(localhost only)"
       }`
     );
-    logger.log(`[bridge] Logs directory: ${LOG_DIR}`);
+    logger.log(`[bridge] Logs directory: ${path.join(__dirname, "logs")}`);
+    logger.log(
+      `[bridge] API Key: ${
+        API_KEY === "dev-secret-key"
+          ? "⚠️  USING DEFAULT (CHANGE IN PRODUCTION!)"
+          : "✓ Set"
+      }`
+    );
   });
 }
 
@@ -445,7 +176,15 @@ app.whenReady().then(() => {
     logger.log("[bridge] Starting Print Bridge...");
     createHiddenWindow();
     createTray();
-    startServer();
+
+    // Wait a bit for hidden window to initialize before starting server
+    // This helps prevent "window not ready" errors on first request
+    setTimeout(() => {
+      startServer();
+      logger.log(
+        "[bridge] Server started. Hidden window should be ready soon."
+      );
+    }, 3000); // Wait 3 seconds for window to initialize (increased from 2s)
   } catch (e) {
     logger.error("[bridge] Startup error:", e);
     app.quit();

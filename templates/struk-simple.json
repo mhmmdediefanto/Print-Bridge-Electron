@@ -1,0 +1,44 @@
+{
+  "templateId": "invoice-80mm",
+  "printerName": "EPSON TM-U220II",
+  "invoice": {
+    "header": {
+      "storeName": "Toko ABC",
+      "address": "Jl. Sudirman No. 123",
+      "phone": "08123456789"
+    },
+    "transaction": {
+      "invoiceNo": "INV-2026-001",
+      "date": "2026-01-15 14:30:00",
+      "cashier": "Budi Santoso"
+    },
+    "items": [
+      {
+        "name": "Beras Premium 5kg",
+        "qty": 2,
+        "price": 750000,
+        "subtotal": 1500000
+      },
+      {
+        "name": "Minyak Goreng 2L",
+        "qty": 3,
+        "price": 25000,
+        "subtotal": 75000
+      }
+    ],
+    "summary": {
+      "subtotal": 225000,
+      "tax": 22500,
+      "discount": 5000,
+      "total": 242500
+    },
+    "payment": {
+      "method": "Cash",
+      "paid": 300000,
+      "change": 57500
+    },
+    "footer": {
+      "message": "Terima kasih atas kunjungan Anda"
+    }
+  }
+}

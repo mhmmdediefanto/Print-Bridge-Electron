@@ -1,0 +1,104 @@
+{
+  "id": "invoice-80mm",
+  "name": "Invoice 80mm",
+  "description": "Template invoice lengkap untuk printer 80mm (thermal printer)",
+  "pageSize": "80mm",
+  "sections": {
+    "header": {
+      "enabled": true,
+      "style": {
+        "storeName": {
+          "fontSize": "18px",
+          "fontWeight": "700",
+          "textAlign": "center"
+        },
+        "address": {
+          "fontSize": "11px",
+          "textAlign": "center"
+        },
+        "phone": {
+          "fontSize": "11px",
+          "textAlign": "center"
+        }
+      }
+    },
+    "transaction": {
+      "enabled": true,
+      "style": {
+        "fontSize": "12px"
+      }
+    },
+    "items": {
+      "enabled": true,
+      "style": {
+        "header": {
+          "fontSize": "11px",
+          "fontWeight": "700"
+        },
+        "item": {
+          "fontSize": "11px"
+        }
+      }
+    },
+    "summary": {
+      "enabled": true,
+      "style": {
+        "fontSize": "12px",
+        "total": {
+          "fontSize": "14px",
+          "fontWeight": "700"
+        }
+      }
+    },
+    "payment": {
+      "enabled": true,
+      "style": {
+        "fontSize": "12px",
+        "change": {
+          "fontWeight": "700"
+        }
+      }
+    },
+    "footer": {
+      "enabled": true,
+      "style": {
+        "fontSize": "11px",
+        "textAlign": "center"
+      }
+    }
+  },
+  "example": {
+    "header": {
+      "storeName": "Toko ABC",
+      "address": "Jl. Contoh 123",
+      "phone": "08123456789"
+    },
+    "transaction": {
+      "invoiceNo": "INV-001",
+      "date": "2026-01-15 10:30:00",
+      "cashier": "John Doe"
+    },
+    "items": [
+      {
+        "name": "Produk A",
+        "qty": 2,
+        "price": 50000,
+        "subtotal": 100000
+      }
+    ],
+    "summary": {
+      "subtotal": 100000,
+      "tax": 10000,
+      "discount": 5000,
+      "total": 105000
+    },
+    "payment": {
+      "method": "Cash",
+      "paid": 110000,
+      "change": 5000
+    },
+    "footer": {
+      "message": "Terima kasih"
+    }
+  }
+}

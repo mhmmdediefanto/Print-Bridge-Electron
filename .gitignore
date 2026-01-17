@@ -19,3 +19,9 @@ Thumbs.db
 *.swp
 *.swo
 
+examples/
+main-backup.js
+FLOW_EXPLANATION.md
+INTEGRATION_GUIDE.md
+POSTMAN_TESTING_GUIDE.md
+TROUBLESHOOTING.md
