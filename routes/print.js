@@ -63,6 +63,125 @@ router.post("/", async (req, res) => {
 });
 
 /**
+ * POST /print/raw
+ * Print raw ESC/POS bytes langsung ke printer via `lp` command.
+ * Bypass electron-pos-printer (Chromium raster) — kompatibel dengan semua receipt printer.
+ * Body: { printerName: string, data: string (base64), copies?: number }
+ */
+router.post("/raw", async (req, res) => {
+  try {
+    if (!req.body || typeof req.body !== "object") {
+      return res.status(400).json({
+        ok: false,
+        error: { code: "INVALID_PAYLOAD", message: "Request body must be a JSON object" },
+      });
+    }
+
+    const { printerName, driver, data, copies } = req.body;
+
+    if (!printerName || typeof printerName !== "string") {
+      return res.status(400).json({
+        ok: false,
+        error: { code: "MISSING_PRINTER", message: "printerName is required" },
+      });
+    }
+
+    if (!data || typeof data !== "string") {
+      return res.status(400).json({
+        ok: false,
+        error: { code: "MISSING_DATA", message: "data (base64 ESC/POS) is required" },
+      });
+    }
+
+    const rawBuffer = Buffer.from(data, "base64");
+    const numCopies = Math.max(1, parseInt(copies) || 1);
+
+    logger.log(
+      `[route] POST /print/raw -> ${printerName}, driver: ${driver || 'local'}, ${rawBuffer.length} bytes, ${numCopies} copies`
+    );
+
+    if (driver === 'network') {
+      const net = require('net');
+      const printToNetwork = () => {
+        return new Promise((resolve, reject) => {
+          const client = new net.Socket();
+          client.setTimeout(5000);
+          
+          client.on('error', (err) => {
+            client.destroy();
+            reject(new Error(`TCP Socket Error: ${err.message}`));
+          });
+          
+          client.on('timeout', () => {
+            client.destroy();
+            reject(new Error(`Timeout connecting to ${printerName}:9100`));
+          });
+          
+          client.connect(9100, printerName, () => {
+            client.write(rawBuffer, () => {
+              client.destroy();
+              resolve();
+            });
+          });
+        });
+      };
+
+      for (let i = 0; i < numCopies; i++) {
+        await printToNetwork();
+      }
+      
+      logger.log(`[route] POST /print/raw -> success (network, ${numCopies} copies)`);
+      return res.json({ ok: true, copies: numCopies, method: 'tcp-network' });
+
+    } else {
+      // Local Print via lp (Linux/Mac)
+      const { spawn } = require("child_process");
+
+      for (let i = 0; i < numCopies; i++) {
+        await new Promise((resolve, reject) => {
+          const lp = spawn("lp", ["-d", printerName, "-o", "raw", "-"]);
+
+          let stderr = "";
+          lp.stderr.on("data", (chunk) => { stderr += chunk.toString(); });
+
+          lp.on("close", (code) => {
+            if (code === 0) {
+              resolve();
+            } else {
+              reject(new Error(`lp exited with code ${code}: ${stderr}`));
+            }
+          });
+
+          lp.on("error", (err) => {
+            reject(new Error(`Failed to spawn lp: ${err.message}`));
+          });
+
+          lp.stdin.write(rawBuffer);
+          lp.stdin.end();
+        });
+      }
+
+      logger.log(`[route] POST /print/raw -> success (local lp, ${numCopies} copies)`);
+      return res.json({ ok: true, copies: numCopies, method: 'local-lp' });
+    }
+
+  } catch (e) {
+    logger.error("[route] POST /print/raw failed:", {
+      error: e?.message || String(e),
+    });
+
+    res.status(500).json({
+      ok: false,
+      error: {
+        code: "RAW_PRINT_ERROR",
+        message: String(e?.message || e),
+        hint: "Check printer connection. If network printer, verify IP and port 9100. If local, ensure `lp` is available.",
+      },
+    });
+  }
+});
+
+/**
  * POST /print/invoice
  * Print invoice dengan format terstruktur (mudah untuk POS)
  */
