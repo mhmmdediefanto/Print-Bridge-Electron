@@ -1,21 +1,50 @@
 {
   "name": "printer",
   "version": "1.0.0",
-  "description": "",
+  "description": "POS Print Bridge",
   "main": "main.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "start": "electron ."
+    "start": "electron .",
+    "build": "electron-builder --windows",
+    "build:linux": "electron-builder --linux"
+  },
+  "build": {
+    "appId": "com.xposure.posprinter",
+    "productName": "POS Print Bridge",
+    "directories": {
+      "output": "dist"
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "icon": "icon.png"
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "icon": "icon.png"
+    }
   },
   "keywords": [],
-  "author": "",
+  "author": {
+    "name": "POS Dev",
+    "email": "ediefanto778@gmail.com"
+  },
+  "homepage": "https://example.com",
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
     "cors": "^2.8.5",
     "dotenv": "^17.2.3",
-    "electron": "^39.2.7",
     "electron-pos-printer": "^1.3.8",
     "express": "^5.2.1"
+  },
+  "devDependencies": {
+    "electron": "^39.2.7",
+    "electron-builder": "^26.8.1"
   }
 }
