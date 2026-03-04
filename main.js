@@ -4,6 +4,8 @@ const dotenv = require("dotenv");
 const { app, BrowserWindow, Tray, Menu } = require("electron");
 const express = require("express");
 const cors = require("cors");
+const { autoUpdater } = require("electron-updater");
+const log = require("electron-log");
 
 const logger = require("./utils/logger");
 const printerService = require("./services/printerService");
@@ -275,6 +277,24 @@ app.whenReady().then(() => {
     logger.log("[bridge] Starting Print Bridge...");
     createHiddenWindow();
     createTray();
+
+    // Setup auto-updater
+    log.transports.file.level = "info";
+    autoUpdater.logger = log;
+
+    // Cek update 5 detik setelah aplikasi jalan
+    setTimeout(() => {
+      logger.log("[bridge] Checking for updates...");
+      autoUpdater.checkForUpdatesAndNotify().catch(err => {
+        logger.error("[bridge] Error checking update:", err);
+      });
+    }, 5000);
+
+    // Kalau update sudah didownload, auto restart & install
+    autoUpdater.on('update-downloaded', (info) => {
+      logger.log(`[bridge] Update v${info.version} downloaded! Restarting to install...`);
+      autoUpdater.quitAndInstall();
+    });
 
     // Wait a bit for hidden window to initialize before starting server
     // This helps prevent "window not ready" errors on first request

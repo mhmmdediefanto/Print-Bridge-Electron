@@ -1,17 +1,25 @@
 {
   "name": "printer",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "POS Print Bridge",
   "main": "main.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "start": "electron .",
     "build": "electron-builder --windows",
-    "build:linux": "electron-builder --linux"
+    "build:linux": "electron-builder --linux",
+    "publish": "electron-builder --publish always"
   },
   "build": {
     "appId": "com.xposure.posprinter",
     "productName": "POS Print Bridge",
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "mhmmdediefanto",
+        "repo": "Print-Bridge-Electron"
+      }
+    ],
     "directories": {
       "output": "dist"
     },
@@ -40,7 +48,9 @@
   "dependencies": {
     "cors": "^2.8.5",
     "dotenv": "^17.2.3",
+    "electron-log": "^5.4.3",
     "electron-pos-printer": "^1.3.8",
+    "electron-updater": "^6.8.3",
     "express": "^5.2.1"
   },
   "devDependencies": {
