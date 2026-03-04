@@ -153,48 +153,140 @@ router.post("/raw", async (req, res) => {
       fs.writeFileSync(tempFilePath, rawBuffer);
 
       // Windows: gunakan copy command dengan printer name
-      // Format: copy /B tempfile "printer_name"
-      // Escape printer name jika ada spasi atau karakter khusus
-      // Note: Printer name harus exact match dengan nama di Windows Printers
+      // Jika printerName bukan path network (tidak diawali \\), coba gunakan PowerShell
+      const isNetworkPath = printerName.startsWith('\\\\');
+      
       const escapedPrinterName = printerName.includes(' ') || printerName.includes('&')
         ? `"${printerName}"` 
         : printerName;
 
       for (let i = 0; i < numCopies; i++) {
         await new Promise((resolve, reject) => {
-          // Gunakan cmd /c untuk menjalankan copy command dengan /B flag (binary mode)
-          // /B flag penting untuk raw bytes agar tidak ada konversi line endings
-          const copyCmd = spawn("cmd", ["/c", "copy", "/B", tempFilePath, escapedPrinterName], {
-            shell: false, // Jangan gunakan shell untuk security
-            stdio: ['ignore', 'pipe', 'pipe']
-          });
-
-          let stdout = "";
-          let stderr = "";
           
-          copyCmd.stdout.on("data", (chunk) => { stdout += chunk.toString(); });
-          copyCmd.stderr.on("data", (chunk) => { stderr += chunk.toString(); });
+          if (!isNetworkPath) {
+             // Jika bukan network share, PowerShell bisa mengirim byte array langsung ke printer lokal
+             // Perhatian: Out-Printer di PowerShell terkadang menambahkan margin/page break, 
+             // tapi untuk raw byte dari file, kita bisa bypass spooler driver via RawPrint
+             // Sebagai fallback paling aman untuk USB tanpa share: 
+             // Kita share temporary via net share, print, lalu unshare.
+             // ATAU pakai PowerShell untuk print isi file.
+             
+             // Karena PowerShell Out-Printer mem-parse text, untuk binary/raw ESCPOS kita pakai .NET
+             const psScript = `
+               $printerName = '${printerName}'
+               $filePath = '${tempFilePath}'
+               $bytes = [System.IO.File]::ReadAllBytes($filePath)
+               
+               Add-Type -TypeDefinition @"
+               using System;
+               using System.Runtime.InteropServices;
+               public class RawPrinterHelper {
+                   [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+                   public class DOCINFOA {
+                       [MarshalAs(UnmanagedType.LPStr)] public string pDocName;
+                       [MarshalAs(UnmanagedType.LPStr)] public string pOutputFile;
+                       [MarshalAs(UnmanagedType.LPStr)] public string pDataType;
+                   }
+                   [DllImport("winspool.Drv", EntryPoint = "OpenPrinterA", SetLastError = true, CharSet = CharSet.Ansi, ExactSpelling = true, CallingConvention = CallingConvention.StdCall)]
+                   public static extern bool OpenPrinter([MarshalAs(UnmanagedType.LPStr)] string szPrinter, out IntPtr hPrinter, IntPtr pd);
+                   [DllImport("winspool.Drv", EntryPoint = "ClosePrinter", SetLastError = true, ExactSpelling = true, CallingConvention = CallingConvention.StdCall)]
+                   public static extern bool ClosePrinter(IntPtr hPrinter);
+                   [DllImport("winspool.Drv", EntryPoint = "StartDocPrinterA", SetLastError = true, CharSet = CharSet.Ansi, ExactSpelling = true, CallingConvention = CallingConvention.StdCall)]
+                   public static extern bool StartDocPrinter(IntPtr hPrinter, int level, [In, MarshalAs(UnmanagedType.LPStruct)] DOCINFOA di);
+                   [DllImport("winspool.Drv", EntryPoint = "EndDocPrinter", SetLastError = true, ExactSpelling = true, CallingConvention = CallingConvention.StdCall)]
+                   public static extern bool EndDocPrinter(IntPtr hPrinter);
+                   [DllImport("winspool.Drv", EntryPoint = "StartPagePrinter", SetLastError = true, ExactSpelling = true, CallingConvention = CallingConvention.StdCall)]
+                   public static extern bool StartPagePrinter(IntPtr hPrinter);
+                   [DllImport("winspool.Drv", EntryPoint = "EndPagePrinter", SetLastError = true, ExactSpelling = true, CallingConvention = CallingConvention.StdCall)]
+                   public static extern bool EndPagePrinter(IntPtr hPrinter);
+                   [DllImport("winspool.Drv", EntryPoint = "WritePrinter", SetLastError = true, ExactSpelling = true, CallingConvention = CallingConvention.StdCall)]
+                   public static extern bool WritePrinter(IntPtr hPrinter, IntPtr pBytes, int dwCount, out int dwWritten);
+                   
+                   public static bool SendBytesToPrinter(string szPrinterName, byte[] pBytes) {
+                       IntPtr pUnmanagedBytes = new IntPtr(0);
+                       int nLength = pBytes.Length;
+                       pUnmanagedBytes = Marshal.AllocCoTaskMem(nLength);
+                       Marshal.Copy(pBytes, 0, pUnmanagedBytes, nLength);
+                       bool bSuccess = false;
+                       IntPtr hPrinter = new IntPtr(0);
+                       DOCINFOA di = new DOCINFOA();
+                       di.pDocName = "RAW Document";
+                       di.pDataType = "RAW";
+                       if (OpenPrinter(szPrinterName.Normalize(), out hPrinter, IntPtr.Zero)) {
+                           if (StartDocPrinter(hPrinter, 1, di)) {
+                               if (StartPagePrinter(hPrinter)) {
+                                   int dwWritten = 0;
+                                   bSuccess = WritePrinter(hPrinter, pUnmanagedBytes, nLength, out dwWritten);
+                                   EndPagePrinter(hPrinter);
+                               }
+                               EndDocPrinter(hPrinter);
+                           }
+                           ClosePrinter(hPrinter);
+                       }
+                       Marshal.FreeCoTaskMem(pUnmanagedBytes);
+                       return bSuccess;
+                   }
+               }
+"@
+               
+               $success = [RawPrinterHelper]::SendBytesToPrinter($printerName, $bytes)
+               if (-not $success) { throw "Win32 API WritePrinter failed for $printerName" }
+             `;
 
-          copyCmd.on("close", (code) => {
-            // Windows copy command returns 0 on success
-            // Output biasanya: "1 file(s) copied." atau "        1 file(s) copied."
-            const successPattern = /file\(s\)\s+copied/i;
-            if (code === 0 || successPattern.test(stdout)) {
-              resolve();
-            } else {
-              // Jika error, cek apakah printer tidak ditemukan
-              const errorMsg = stderr || stdout || `Exit code: ${code}`;
-              if (errorMsg.includes("cannot find") || errorMsg.includes("tidak dapat menemukan")) {
-                reject(new Error(`Printer not found: ${printerName}. Make sure printer is installed and name matches exactly.`));
-              } else {
-                reject(new Error(`copy command failed: ${errorMsg}`));
-              }
-            }
-          });
+             const psCmd = spawn("powershell", ["-NoProfile", "-NonInteractive", "-Command", psScript], {
+               shell: false,
+               stdio: ['ignore', 'pipe', 'pipe']
+             });
 
-          copyCmd.on("error", (err) => {
-            reject(new Error(`Failed to execute copy command: ${err.message}`));
-          });
+             let stdout = "";
+             let stderr = "";
+
+             psCmd.stdout.on("data", (chunk) => { stdout += chunk.toString(); });
+             psCmd.stderr.on("data", (chunk) => { stderr += chunk.toString(); });
+
+             psCmd.on("close", (code) => {
+               if (code === 0 && !stderr.includes("Exception")) {
+                 resolve();
+               } else {
+                 reject(new Error(`PowerShell Raw API failed: ${stderr || stdout}`));
+               }
+             });
+
+             psCmd.on("error", (err) => {
+               reject(new Error(`Failed to execute PowerShell: ${err.message}`));
+             });
+
+          } else {
+              // Jika formatnya \\... (Network Share), gunakan command prompt copy biasa
+              const copyCmd = spawn("cmd", ["/c", "copy", "/B", tempFilePath, escapedPrinterName], {
+                shell: false, // Jangan gunakan shell untuk security
+                stdio: ['ignore', 'pipe', 'pipe']
+              });
+
+              let stdout = "";
+              let stderr = "";
+              
+              copyCmd.stdout.on("data", (chunk) => { stdout += chunk.toString(); });
+              copyCmd.stderr.on("data", (chunk) => { stderr += chunk.toString(); });
+
+              copyCmd.on("close", (code) => {
+                const successPattern = /file\(s\)\s+copied/i;
+                if (code === 0 || successPattern.test(stdout)) {
+                  resolve();
+                } else {
+                  const errorMsg = stderr || stdout || `Exit code: ${code}`;
+                  if (errorMsg.includes("cannot find") || errorMsg.includes("tidak dapat menemukan")) {
+                    reject(new Error(`Printer not found: ${printerName}. Make sure printer is installed and name matches exactly.`));
+                  } else {
+                    reject(new Error(`copy command failed: ${errorMsg}`));
+                  }
+                }
+              });
+
+              copyCmd.on("error", (err) => {
+                reject(new Error(`Failed to execute copy command: ${err.message}`));
+              });
+          }
         });
       }
 
@@ -208,8 +300,8 @@ router.post("/raw", async (req, res) => {
         logger.warn(`[route] Failed to cleanup temp file: ${cleanupErr.message}`);
       }
 
-      logger.log(`[route] POST /print/raw -> success (Windows copy, ${numCopies} copies)`);
-      return res.json({ ok: true, copies: numCopies, method: 'windows-copy' });
+      logger.log(`[route] POST /print/raw -> success (Windows, ${numCopies} copies)`);
+      return res.json({ ok: true, copies: numCopies, method: isNetworkPath ? 'windows-copy' : 'windows-raw-api' });
 
     } else {
       // Local Print via lp (Linux/Mac)
