@@ -1,7 +1,7 @@
 const path = require("path");
 const fs = require("fs");
 const dotenv = require("dotenv");
-const { app, BrowserWindow, Tray, Menu } = require("electron");
+const { app, BrowserWindow, Tray, Menu, dialog } = require("electron");
 const express = require("express");
 const cors = require("cors");
 const { autoUpdater } = require("electron-updater");
@@ -55,6 +55,7 @@ const PORT = Number(process.env.PRINT_BRIDGE_PORT || 1818);
 const API_KEY = process.env.PRINT_BRIDGE_KEY || "dev-secret-key";
 const ALLOW_ALL_ORIGINS =
   String(process.env.PRINT_BRIDGE_ALLOW_ALL || "").toLowerCase() === "true";
+const IS_DEV = process.env.NODE_ENV !== "production";
 
 // contoh:
 // PRINT_BRIDGE_ALLOWED_ORIGINS="https://seller.gayabaru.online,http://pos-kasir.local"
@@ -84,6 +85,30 @@ function isOriginAllowed(origin) {
   }
 
   return false;
+}
+
+function showAboutDialog() {
+  const version = app.getVersion ? app.getVersion() : "unknown";
+
+  dialog.showMessageBox({
+    type: "info",
+    title: "About POS Print Bridge",
+    message: `POS Print Bridge`,
+    detail: [
+      `Version   : ${version}`,
+      `Port      : ${PORT}`,
+      `Mode      : ${IS_DEV ? "Development" : "Production"}`,
+      `Origins   : ${
+        ALLOW_ALL_ORIGINS
+          ? "ALL (PRINT_BRIDGE_ALLOW_ALL=true)"
+          : ALLOWED_ORIGINS.length
+          ? ALLOWED_ORIGINS.join(", ")
+          : "localhost only"
+      }`,
+    ].join("\n"),
+    buttons: ["OK"],
+    defaultId: 0,
+  });
 }
 
 // Routes
@@ -128,7 +153,13 @@ function createTray() {
 
   tray = new Tray(iconPath);
   const menu = Menu.buildFromTemplate([
-    { label: `Print Bridge: Running (:${PORT})`, enabled: false },
+    {
+      label: `POS Print Bridge v${app.getVersion ? app.getVersion() : "dev"}`,
+      enabled: false,
+    },
+    { label: `Running on :${PORT}`, enabled: false },
+    { type: "separator" },
+    { label: "About...", click: () => showAboutDialog() },
     { type: "separator" },
     { label: "Quit", click: () => app.quit() },
   ]);
@@ -216,7 +247,14 @@ function startServer() {
 
   // 2) Health TANPA API key (biar gampang cek koneksi)
   server.get("/health", (_req, res) => {
-    res.json({ ok: true, app: "pos-print-bridge", port: PORT });
+    const version = app.getVersion ? app.getVersion() : "dev";
+    res.json({
+      ok: true,
+      app: "pos-print-bridge",
+      port: PORT,
+      version,
+      env: IS_DEV ? "development" : "production",
+    });
   });
 
   // 3) Auth middleware: skip OPTIONS (preflight)
