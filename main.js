@@ -320,19 +320,48 @@ app.whenReady().then(() => {
     log.transports.file.level = "info";
     autoUpdater.logger = log;
 
+    // Listener status update
+    autoUpdater.on("update-available", (info) => {
+      logger.log(
+        `[bridge] Update available: v${info.version} (current: ${app.getVersion()})`
+      );
+    });
+
+    autoUpdater.on("update-not-available", () => {
+      logger.log("[bridge] No updates available");
+    });
+
+    // Kalau update sudah didownload, tanyakan ke user sebelum restart
+    autoUpdater.on("update-downloaded", async (info) => {
+      logger.log(
+        `[bridge] Update v${info.version} downloaded. Waiting for user confirmation to install...`
+      );
+
+      const result = await dialog.showMessageBox({
+        type: "info",
+        title: "Update tersedia",
+        message: "Update baru POS Print Bridge sudah siap dipasang.",
+        detail: `Versi baru: v${info.version}\nVersi sekarang: v${app.getVersion()}\n\nAplikasi perlu restart sebentar untuk menyelesaikan update.`,
+        buttons: ["Restart sekarang", "Nanti saja"],
+        defaultId: 0,
+        cancelId: 1,
+      });
+
+      if (result.response === 0) {
+        logger.log("[bridge] User accepted update, restarting to install...");
+        autoUpdater.quitAndInstall();
+      } else {
+        logger.log("[bridge] User postponed update installation");
+      }
+    });
+
     // Cek update 5 detik setelah aplikasi jalan
     setTimeout(() => {
       logger.log("[bridge] Checking for updates...");
-      autoUpdater.checkForUpdatesAndNotify().catch(err => {
+      autoUpdater.checkForUpdatesAndNotify().catch((err) => {
         logger.error("[bridge] Error checking update:", err);
       });
     }, 5000);
-
-    // Kalau update sudah didownload, auto restart & install
-    autoUpdater.on('update-downloaded', (info) => {
-      logger.log(`[bridge] Update v${info.version} downloaded! Restarting to install...`);
-      autoUpdater.quitAndInstall();
-    });
 
     // Wait a bit for hidden window to initialize before starting server
     // This helps prevent "window not ready" errors on first request
