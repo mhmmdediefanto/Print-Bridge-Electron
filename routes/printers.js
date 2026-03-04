@@ -30,4 +30,45 @@ router.get("/", async (req, res) => {
   }
 });
 
+/**
+ * GET /printers/check
+ * Check network printer status via TCP ping
+ * Query params: target (IP address), port (optional, default 9100)
+ */
+router.get("/check", async (req, res) => {
+  try {
+    const { target, port = 9100 } = req.query;
+
+    if (!target) {
+      return res.status(400).json({
+        ok: false,
+        error: {
+          code: "MISSING_TARGET",
+          message: "Parameter 'target' (IP address) is required",
+        },
+      });
+    }
+
+    const isOnline = await printerService.checkNetworkPrinter(target, parseInt(port, 10));
+
+    logger.log(`[route] GET /printers/check -> target=${target}:${port} online=${isOnline}`);
+
+    res.json({
+      ok: true,
+      target,
+      port,
+      online: isOnline,
+    });
+  } catch (e) {
+    logger.error(`[route] GET /printers/check failed for ${req.query.target}:`, e);
+    res.status(500).json({
+      ok: false,
+      error: {
+        code: "CHECK_ERROR",
+        message: String(e?.message || e),
+      },
+    });
+  }
+});
+
 module.exports = router;

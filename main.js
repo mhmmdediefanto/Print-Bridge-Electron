@@ -1,13 +1,52 @@
-require("dotenv").config();
-
-const { app, BrowserWindow, Tray, Menu } = require("electron");
 const path = require("path");
 const fs = require("fs");
+const dotenv = require("dotenv");
+const { app, BrowserWindow, Tray, Menu } = require("electron");
 const express = require("express");
 const cors = require("cors");
 
 const logger = require("./utils/logger");
 const printerService = require("./services/printerService");
+
+// Load .env dari beberapa kemungkinan lokasi:
+// - process.cwd()              → dev run dari project root
+// - path.dirname(process.execPath) → folder EXE hasil install
+// - __dirname                  → lokasi app/asarnya sendiri
+(function loadEnv() {
+  const candidates = [];
+
+  try {
+    candidates.push(path.join(process.cwd(), ".env"));
+  } catch {
+    // ignore
+  }
+
+  try {
+    if (process.execPath) {
+      candidates.push(path.join(path.dirname(process.execPath), ".env"));
+    }
+  } catch {
+    // ignore
+  }
+
+  try {
+    candidates.push(path.join(__dirname, ".env"));
+  } catch {
+    // ignore
+  }
+
+  for (const envPath of candidates) {
+    try {
+      if (envPath && fs.existsSync(envPath)) {
+        dotenv.config({ path: envPath });
+        logger.log("[bridge] Loaded .env from", envPath);
+        break;
+      }
+    } catch {
+      // ignore errors saat cek / load
+    }
+  }
+})();
 
 // Configuration
 const PORT = Number(process.env.PRINT_BRIDGE_PORT || 1818);
@@ -21,6 +60,29 @@ const ALLOWED_ORIGINS = (process.env.PRINT_BRIDGE_ALLOWED_ORIGINS || "")
   .split(",")
   .map((s) => s.trim())
   .filter(Boolean);
+
+function isOriginAllowed(origin) {
+  // origin null biasanya dari file:// atau beberapa kondisi dev
+  if (!origin) return true;
+
+  // allow all jika diizinkan lewat env (misal dev/testing)
+  if (ALLOW_ALL_ORIGINS) return true;
+
+  // allow localhost origins
+  if (
+    origin.startsWith("http://127.0.0.1") ||
+    origin.startsWith("http://localhost")
+  ) {
+    return true;
+  }
+
+  // allowlist dari env
+  if (ALLOWED_ORIGINS.length > 0 && ALLOWED_ORIGINS.includes(origin)) {
+    return true;
+  }
+
+  return false;
+}
 
 // Routes
 const printersRouter = require("./routes/printers");
@@ -55,9 +117,10 @@ function createHiddenWindow() {
 }
 
 function createTray() {
-  const iconPath = path.join(__dirname, "icon.webp");
+  // Gunakan icon.png yang sudah dipakai juga untuk build windows
+  const iconPath = path.join(__dirname, "icon.png");
   if (!fs.existsSync(iconPath)) {
-    logger.warn("[bridge] icon.webp not found, skipping tray");
+    logger.warn("[bridge] icon.png not found, skipping tray");
     return;
   }
 
@@ -96,7 +159,14 @@ function makeCorsOptions() {
       return cb(new Error(`CORS blocked for origin: ${origin}`));
     },
     methods: ["GET", "POST", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "X-API-KEY"],
+    // Izinkan beberapa header umum yang sering dipakai browser / library
+    allowedHeaders: [
+      "Content-Type",
+      "X-API-KEY",
+      "Authorization",
+      "X-Requested-With",
+      "Accept",
+    ],
     optionsSuccessStatus: 204,
   };
 }
@@ -105,11 +175,42 @@ function startServer() {
   const server = express();
   server.use(express.json({ limit: "5mb" }));
 
-  // 1) CORS duluan + handle preflight
-  const corsOptions = makeCorsOptions();
-  server.use(cors(corsOptions));
-  // path-to-regexp v6 tidak menerima "*", pakai regex untuk wildcard
-  server.options(/.*/, cors(corsOptions));
+  // 1) CORS middleware manual + handle preflight
+  server.use((req, res, next) => {
+    const origin = req.header("Origin");
+
+    // Non-browser client (curl, Postman, dll)
+    if (!origin) {
+      return next();
+    }
+
+    if (!isOriginAllowed(origin)) {
+      // Untuk origin yang tidak diizinkan, balas jelas (tanpa ACAO)
+      return res.status(403).json({
+        ok: false,
+        error: {
+          code: "CORS_BLOCKED",
+          message: `CORS blocked for origin: ${origin}`,
+        },
+      });
+    }
+
+    // Origin diizinkan -> set header CORS
+    res.header("Access-Control-Allow-Origin", origin);
+    res.header("Vary", "Origin");
+    res.header("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
+    res.header(
+      "Access-Control-Allow-Headers",
+      "Content-Type, X-API-KEY, Authorization, X-Requested-With, Accept"
+    );
+
+    // Preflight request -> cukup balas 204 dengan header di atas
+    if (req.method === "OPTIONS") {
+      return res.sendStatus(204);
+    }
+
+    return next();
+  });
 
   // 2) Health TANPA API key (biar gampang cek koneksi)
   server.get("/health", (_req, res) => {
@@ -118,8 +219,6 @@ function startServer() {
 
   // 3) Auth middleware: skip OPTIONS (preflight)
   server.use((req, res, next) => {
-    if (req.method === "OPTIONS") return res.sendStatus(204);
-
     const key = req.header("X-API-KEY");
     if (key !== API_KEY) {
       return res.status(401).json({

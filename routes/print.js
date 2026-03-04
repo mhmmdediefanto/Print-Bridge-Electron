@@ -6,6 +6,9 @@ const { formatInvoice, getPrintOptions } = require("../utils/invoiceFormatter");
 const templateService = require("../services/templateService");
 const validationService = require("../services/validationService");
 const printerService = require("../services/printerService");
+const os = require("os");
+const path = require("path");
+const fs = require("fs");
 
 /**
  * POST /print
@@ -64,11 +67,16 @@ router.post("/", async (req, res) => {
 
 /**
  * POST /print/raw
- * Print raw ESC/POS bytes langsung ke printer via `lp` command.
+ * Print raw ESC/POS bytes langsung ke printer.
+ * - Windows: menggunakan copy command dengan temp file
+ * - Linux/Mac: menggunakan lp command
+ * - Network: TCP socket ke port 9100
  * Bypass electron-pos-printer (Chromium raster) — kompatibel dengan semua receipt printer.
- * Body: { printerName: string, data: string (base64), copies?: number }
+ * Body: { printerName: string, data: string (base64), copies?: number, driver?: 'local'|'network' }
  */
 router.post("/raw", async (req, res) => {
+  let tempFilePath = null;
+  
   try {
     if (!req.body || typeof req.body !== "object") {
       return res.status(400).json({
@@ -95,11 +103,13 @@ router.post("/raw", async (req, res) => {
 
     const rawBuffer = Buffer.from(data, "base64");
     const numCopies = Math.max(1, parseInt(copies) || 1);
+    const platform = os.platform();
 
     logger.log(
-      `[route] POST /print/raw -> ${printerName}, driver: ${driver || 'local'}, ${rawBuffer.length} bytes, ${numCopies} copies`
+      `[route] POST /print/raw -> ${printerName}, platform: ${platform}, driver: ${driver || 'local'}, ${rawBuffer.length} bytes, ${numCopies} copies`
     );
 
+    // Network printer (cross-platform)
     if (driver === 'network') {
       const net = require('net');
       const printToNetwork = () => {
@@ -132,6 +142,74 @@ router.post("/raw", async (req, res) => {
       
       logger.log(`[route] POST /print/raw -> success (network, ${numCopies} copies)`);
       return res.json({ ok: true, copies: numCopies, method: 'tcp-network' });
+    }
+
+    // Local printer - Windows
+    if (platform === 'win32') {
+      const { spawn } = require("child_process");
+      
+      // Create temp file untuk raw data
+      tempFilePath = path.join(os.tmpdir(), `print_raw_${Date.now()}_${Math.random().toString(36).substr(2, 9)}.raw`);
+      fs.writeFileSync(tempFilePath, rawBuffer);
+
+      // Windows: gunakan copy command dengan printer name
+      // Format: copy /B tempfile "printer_name"
+      // Escape printer name jika ada spasi atau karakter khusus
+      // Note: Printer name harus exact match dengan nama di Windows Printers
+      const escapedPrinterName = printerName.includes(' ') || printerName.includes('&')
+        ? `"${printerName}"` 
+        : printerName;
+
+      for (let i = 0; i < numCopies; i++) {
+        await new Promise((resolve, reject) => {
+          // Gunakan cmd /c untuk menjalankan copy command dengan /B flag (binary mode)
+          // /B flag penting untuk raw bytes agar tidak ada konversi line endings
+          const copyCmd = spawn("cmd", ["/c", "copy", "/B", tempFilePath, escapedPrinterName], {
+            shell: false, // Jangan gunakan shell untuk security
+            stdio: ['ignore', 'pipe', 'pipe']
+          });
+
+          let stdout = "";
+          let stderr = "";
+          
+          copyCmd.stdout.on("data", (chunk) => { stdout += chunk.toString(); });
+          copyCmd.stderr.on("data", (chunk) => { stderr += chunk.toString(); });
+
+          copyCmd.on("close", (code) => {
+            // Windows copy command returns 0 on success
+            // Output biasanya: "1 file(s) copied." atau "        1 file(s) copied."
+            const successPattern = /file\(s\)\s+copied/i;
+            if (code === 0 || successPattern.test(stdout)) {
+              resolve();
+            } else {
+              // Jika error, cek apakah printer tidak ditemukan
+              const errorMsg = stderr || stdout || `Exit code: ${code}`;
+              if (errorMsg.includes("cannot find") || errorMsg.includes("tidak dapat menemukan")) {
+                reject(new Error(`Printer not found: ${printerName}. Make sure printer is installed and name matches exactly.`));
+              } else {
+                reject(new Error(`copy command failed: ${errorMsg}`));
+              }
+            }
+          });
+
+          copyCmd.on("error", (err) => {
+            reject(new Error(`Failed to execute copy command: ${err.message}`));
+          });
+        });
+      }
+
+      // Cleanup temp file
+      try {
+        if (tempFilePath && fs.existsSync(tempFilePath)) {
+          fs.unlinkSync(tempFilePath);
+          tempFilePath = null;
+        }
+      } catch (cleanupErr) {
+        logger.warn(`[route] Failed to cleanup temp file: ${cleanupErr.message}`);
+      }
+
+      logger.log(`[route] POST /print/raw -> success (Windows copy, ${numCopies} copies)`);
+      return res.json({ ok: true, copies: numCopies, method: 'windows-copy' });
 
     } else {
       // Local Print via lp (Linux/Mac)
@@ -139,7 +217,9 @@ router.post("/raw", async (req, res) => {
 
       for (let i = 0; i < numCopies; i++) {
         await new Promise((resolve, reject) => {
-          const lp = spawn("lp", ["-d", printerName, "-o", "raw", "-"]);
+          const lp = spawn("lp", ["-d", printerName, "-o", "raw", "-"], {
+            shell: false
+          });
 
           let stderr = "";
           lp.stderr.on("data", (chunk) => { stderr += chunk.toString(); });
@@ -166,16 +246,32 @@ router.post("/raw", async (req, res) => {
     }
 
   } catch (e) {
+    // Cleanup temp file on error
+    if (tempFilePath) {
+      try {
+        if (fs.existsSync(tempFilePath)) {
+          fs.unlinkSync(tempFilePath);
+        }
+      } catch (cleanupErr) {
+        logger.warn(`[route] Failed to cleanup temp file on error: ${cleanupErr.message}`);
+      }
+    }
+
     logger.error("[route] POST /print/raw failed:", {
       error: e?.message || String(e),
     });
+
+    const platform = os.platform();
+    const hint = platform === 'win32'
+      ? "Check printer connection and name. Ensure printer is installed and accessible. For network printer, use driver: 'network'."
+      : "Check printer connection. If network printer, verify IP and port 9100. If local, ensure `lp` is available.";
 
     res.status(500).json({
       ok: false,
       error: {
         code: "RAW_PRINT_ERROR",
         message: String(e?.message || e),
-        hint: "Check printer connection. If network printer, verify IP and port 9100. If local, ensure `lp` is available.",
+        hint: hint,
       },
     });
   }
