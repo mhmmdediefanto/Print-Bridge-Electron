@@ -316,52 +316,74 @@ app.whenReady().then(() => {
     createHiddenWindow();
     createTray();
 
-    // Setup auto-updater
-    log.transports.file.level = "info";
-    autoUpdater.logger = log;
+    // Setup auto-updater (dengan error handling yang lebih baik)
+    // Jangan crash aplikasi kalau auto-updater error
+    try {
+      log.transports.file.level = "info";
+      autoUpdater.logger = log;
 
-    // Listener status update
-    autoUpdater.on("update-available", (info) => {
-      logger.log(
-        `[bridge] Update available: v${info.version} (current: ${app.getVersion()})`
-      );
-    });
-
-    autoUpdater.on("update-not-available", () => {
-      logger.log("[bridge] No updates available");
-    });
-
-    // Kalau update sudah didownload, tanyakan ke user sebelum restart
-    autoUpdater.on("update-downloaded", async (info) => {
-      logger.log(
-        `[bridge] Update v${info.version} downloaded. Waiting for user confirmation to install...`
-      );
-
-      const result = await dialog.showMessageBox({
-        type: "info",
-        title: "Update tersedia",
-        message: "Update baru POS Print Bridge sudah siap dipasang.",
-        detail: `Versi baru: v${info.version}\nVersi sekarang: v${app.getVersion()}\n\nAplikasi perlu restart sebentar untuk menyelesaikan update.`,
-        buttons: ["Restart sekarang", "Nanti saja"],
-        defaultId: 0,
-        cancelId: 1,
+      // Listener status update
+      autoUpdater.on("update-available", (info) => {
+        logger.log(
+          `[bridge] Update available: v${info.version} (current: ${app.getVersion()})`
+        );
       });
 
-      if (result.response === 0) {
-        logger.log("[bridge] User accepted update, restarting to install...");
-        autoUpdater.quitAndInstall();
-      } else {
-        logger.log("[bridge] User postponed update installation");
-      }
-    });
-
-    // Cek update 5 detik setelah aplikasi jalan
-    setTimeout(() => {
-      logger.log("[bridge] Checking for updates...");
-      autoUpdater.checkForUpdatesAndNotify().catch((err) => {
-        logger.error("[bridge] Error checking update:", err);
+      autoUpdater.on("update-not-available", () => {
+        logger.log("[bridge] No updates available");
       });
-    }, 5000);
+
+      autoUpdater.on("error", (err) => {
+        logger.error("[bridge] Auto-updater error:", err.message || err);
+        // Jangan crash aplikasi, hanya log error
+      });
+
+      // Kalau update sudah didownload, tanyakan ke user sebelum restart
+      autoUpdater.on("update-downloaded", async (info) => {
+        try {
+          logger.log(
+            `[bridge] Update v${info.version} downloaded. Waiting for user confirmation to install...`
+          );
+
+          const result = await dialog.showMessageBox({
+            type: "info",
+            title: "Update tersedia",
+            message: "Update baru POS Print Bridge sudah siap dipasang.",
+            detail: `Versi baru: v${info.version}\nVersi sekarang: v${app.getVersion()}\n\nAplikasi perlu restart sebentar untuk menyelesaikan update.`,
+            buttons: ["Restart sekarang", "Nanti saja"],
+            defaultId: 0,
+            cancelId: 1,
+          });
+
+          if (result.response === 0) {
+            logger.log("[bridge] User accepted update, restarting to install...");
+            autoUpdater.quitAndInstall();
+          } else {
+            logger.log("[bridge] User postponed update installation");
+          }
+        } catch (err) {
+          logger.error("[bridge] Error showing update dialog:", err.message || err);
+          // Fallback: auto install kalau dialog error
+          logger.log("[bridge] Auto-installing update due to dialog error...");
+          autoUpdater.quitAndInstall();
+        }
+      });
+
+      // Cek update 5 detik setelah aplikasi jalan (non-blocking)
+      setTimeout(() => {
+        logger.log("[bridge] Checking for updates...");
+        autoUpdater.checkForUpdatesAndNotify().catch((err) => {
+          logger.error("[bridge] Error checking update:", err.message || err);
+          // Jangan crash, hanya log error
+        });
+      }, 5000);
+    } catch (updaterErr) {
+      // Kalau setup auto-updater gagal, log tapi tetap lanjutkan startup
+      logger.warn(
+        "[bridge] Auto-updater setup failed, continuing without auto-update:",
+        updaterErr.message || updaterErr
+      );
+    }
 
     // Wait a bit for hidden window to initialize before starting server
     // This helps prevent "window not ready" errors on first request
