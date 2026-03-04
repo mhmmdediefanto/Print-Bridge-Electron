@@ -2,7 +2,17 @@ const path = require("path");
 const fs = require("fs");
 
 // Setup logging ke file
-const LOG_DIR = path.join(__dirname, "..", "logs");
+// Deteksi packaged app (kode di dalam app.asar)
+const isPackaged = __dirname.includes("app.asar");
+let LOG_DIR;
+
+if (isPackaged && process.versions?.electron) {
+  const { app } = require("electron");
+  LOG_DIR = path.join(app.getPath("userData"), "logs");
+} else {
+  LOG_DIR = path.join(__dirname, "..", "logs");
+}
+
 const MAX_LOG_SIZE = 5 * 1024 * 1024; // 5MB per file
 const MAX_LOG_FILES = 5; // keep 5 files max
 
