@@ -1,6 +1,6 @@
 {
   "name": "printer",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "POS Print Bridge",
   "main": "main.js",
   "scripts": {
