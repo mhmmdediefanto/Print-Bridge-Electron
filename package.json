@@ -8,7 +8,7 @@
     "start": "electron .",
     "build": "electron-builder --windows",
     "build:linux": "electron-builder --linux",
-    "publish": "electron-builder --publish always"
+    "publish": "electron-builder --windows --publish always"
   },
   "build": {
     "appId": "com.xposure.posprinter",
