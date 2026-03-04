@@ -7,8 +7,11 @@
     "test": "echo \"Error: no test specified\" && exit 1",
     "start": "electron .",
     "build": "electron-builder --windows",
+    "build:mac": "electron-builder --mac",
     "build:linux": "electron-builder --linux",
-    "publish": "electron-builder --windows --publish always"
+    "publish": "electron-builder --windows --publish always",
+    "publish:mac": "electron-builder --mac --publish always",
+    "publish:all": "electron-builder -wml --publish always"
   },
   "build": {
     "appId": "com.xposure.posprinter",
@@ -35,6 +38,13 @@
         "deb"
       ],
       "icon": "icon.png"
+    },
+    "mac": {
+      "target": [
+        "dmg"
+      ],
+      "icon": "icon.png",
+      "category": "public.app-category.utilities"
     }
   },
   "keywords": [],
