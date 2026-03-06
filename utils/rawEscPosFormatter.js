@@ -1,37 +1,128 @@
+const { nativeImage } = require("electron");
+
 const ESC = "\x1b";
 const GS = "\x1d";
 
 // Helper functions for raw ESC/POS formatting
 const commands = {
-  INIT: ESC + "@", // Initialize printer
-  LF: "\n", // Line feed
-  BOLD_ON: ESC + "E" + "\x01", // Bold on
-  BOLD_OFF: ESC + "E" + "\x00", // Bold off
-  ALIGN_LEFT: ESC + "a" + "\x00", // Align left
-  ALIGN_CENTER: ESC + "a" + "\x01", // Align center
-  ALIGN_RIGHT: ESC + "a" + "\x02", // Align right
-  CUT_FULL: GS + "V" + "\x00", // Full cut
-  CUT_PARTIAL: GS + "V" + "\x01", // Partial cut
+  INIT: Buffer.from([0x1b, 0x40]), // ESC @
+  LF: Buffer.from([0x0a]),
+  BOLD_ON: Buffer.from([0x1b, 0x45, 0x01]),
+  BOLD_OFF: Buffer.from([0x1b, 0x45, 0x00]),
+  ALIGN_LEFT: Buffer.from([0x1b, 0x61, 0x00]),
+  ALIGN_CENTER: Buffer.from([0x1b, 0x61, 0x01]),
+  ALIGN_RIGHT: Buffer.from([0x1b, 0x61, 0x02]),
+  CUT_FULL: Buffer.from([0x1d, 0x56, 0x00]),
+  CUT_PARTIAL: Buffer.from([0x1d, 0x56, 0x42, 0x03]), // GS V 66 3
 };
+
+/**
+ * Konversi DataURL gambar menjadi perintah Bitmap ESC * 
+ * Menggunakan mode 8-dot single density (m=0)
+ */
+function buildImageBytes(dataUrl, colsWidth = 40) {
+  try {
+    if (!dataUrl) return null;
+    
+    // Max width diperkecil sesuai request (awalnya 200)
+    const maxWidth = 140; 
+    
+    let img = nativeImage.createFromDataURL(dataUrl);
+    if (img.isEmpty()) {
+       console.log("[debug] Image is empty, likely unsupported format. Returning null.");
+       return null;
+    }
+
+    let size = img.getSize();
+    if (size.width > maxWidth) {
+      const scale = maxWidth / size.width;
+      const targetHeight = Math.round(size.height * scale);
+      img = img.resize({ width: maxWidth, height: targetHeight, quality: "good" });
+      size = img.getSize();
+    }
+
+    const { width, height } = size;
+    const bitmap = img.toBitmap(); // RGBA bytes
+    
+    let buffers = [];
+    
+    // Turunkan sedikit posisinya (tambah spasi kosong di atas logo)
+    buffers.push(commands.LF);
+
+    buffers.push(commands.ALIGN_CENTER);
+
+    // Ubah line spacing ke 16/144 inch agar 8-dot graphics rapat/menyatu (tidak pecah bergaris)
+    buffers.push(Buffer.from([0x1b, 0x33, 16]));
+
+    // ESC/POS dot-matrix memakai 1 byte untuk 8 pixel vertikal
+    // Format: ESC * m n1 n2 [d1 ... dk]
+    for (let y = 0; y < height; y += 8) {
+        const m = 0;
+        const n1 = width & 0xFF; 
+        const n2 = (width >> 8) & 0xFF; 
+        
+        buffers.push(Buffer.from([0x1b, 0x2a, m, n1, n2])); 
+        
+        let slice = Buffer.alloc(width);
+        for (let x = 0; x < width; x++) {
+            let columnByte = 0x00;
+            for (let b = 0; b < 8; b++) {
+                const py = y + b;
+                if (py < height) {
+                    const idx = (py * width + x) * 4;
+                    if (idx < bitmap.length) {
+                       const r = bitmap[idx];
+                       const g = bitmap[idx+1];
+                       const b_color = bitmap[idx+2];
+                       const a = bitmap[idx+3];
+                       
+                       const luma = (r * 0.299 + g * 0.587 + b_color * 0.114);
+                       if (a > 128 && luma < 128) {
+                           columnByte |= (1 << (7 - b)); 
+                       }
+                    }
+                }
+            }
+            slice[x] = columnByte;
+        }
+        buffers.push(slice); 
+        buffers.push(commands.LF); 
+    }
+    
+    // Kembalikan setelan line spacing ke standar bawaan printer (1/6 inch)
+    buffers.push(Buffer.from([0x1b, 0x32]));
+    
+    buffers.push(commands.LF); 
+    return Buffer.concat(buffers);
+    
+  } catch (err) {
+    console.error("Gagal merender data URL Logo via ESC/POS", err.message);
+    return null;
+  }
+}
 
 function formatRawEscPos(invoiceData, template = null) {
   const { header, transaction, items, summary, payment, footer } =
     invoiceData || {};
     
-  let buffer = "";
+  let buffers = [];
   
   // =========================
   // SETUP
   // =========================
-  const cols = template?.columns || 40; // TM-U220 usually supports 40 columns (A/B) or 33 columns (C) with 76mm roll. Safe side 40.
+  const cols = template?.columns || 40; 
   
-  // Append raw bytes to buffer
   const write = (cmd) => {
-    buffer += cmd;
+    if (Buffer.isBuffer(cmd)) {
+        buffers.push(cmd);
+    } else {
+        buffers.push(Buffer.from(cmd, "ascii"));
+    }
   };
 
   const writeLine = (text) => {
-    buffer += text + commands.LF;
+    write(text);
+    write(commands.LF);
   };
   
   const separator = () => {
@@ -47,7 +138,6 @@ function formatRawEscPos(invoiceData, template = null) {
     }).format(n);
   };
   
-  // Pad strings to fixed width
   const alignLeftRight = (left, right, width = cols) => {
       const spc = width - left.length - right.length;
       if (spc <= 0) return left + " " + right;
@@ -77,7 +167,15 @@ function formatRawEscPos(invoiceData, template = null) {
   // =========================
   write(commands.INIT);
 
-  // HEADER
+  // HEADER LOGO
+  if (header?.logoDataUrl) {
+     const imageBuffer = buildImageBytes(header.logoDataUrl, cols);
+     if (imageBuffer) {
+         write(imageBuffer);
+     }
+  }
+
+  // HEADER TEXT
   if (header) {
     write(commands.ALIGN_CENTER);
     if (header.storeName) {
@@ -108,7 +206,7 @@ function formatRawEscPos(invoiceData, template = null) {
   if (items?.length) {
     const qtyW = 4;
     const priceW = 9;
-    const descW = cols - qtyW - priceW; // Flexible name width
+    const descW = cols - qtyW - priceW;
 
     items.forEach((item) => {
       const name = item?.name || item?.productName || "";
@@ -118,16 +216,20 @@ function formatRawEscPos(invoiceData, template = null) {
       const price = item?.price ?? 0;
       const sub = item?.subtotal ?? Number(qty) * Number(price);
 
-      // Print first line: Item Name (can be wrapped)
       nameLines.forEach((ln) => writeLine(ln));
 
-      // Second line: QTY x PRICE = SUBTOTAL right aligned
       const qtyStr = `${qty}x`;
       const priceStr = formatCurrency(price);
       const subStr = formatCurrency(sub);
       
       const leftPart = `  ${qtyStr} @ ${priceStr}`;
       writeLine(alignLeftRight(leftPart, subStr, cols));
+      
+      // DISKON
+      const diskon = item?.discount ?? 0;
+      if (diskon > 0) {
+          writeLine(alignLeftRight(`  Diskon/Item`, `-${formatCurrency(diskon)}`));
+      }
     });
     separator();
   }
@@ -138,7 +240,7 @@ function formatRawEscPos(invoiceData, template = null) {
       writeLine(alignLeftRight("Subtotal:", formatCurrency(summary.subtotal)));
     }
     if (summary.discount !== undefined && Number(summary.discount) > 0) {
-      writeLine(alignLeftRight("Diskon:", formatCurrency(summary.discount)));
+      writeLine(alignLeftRight("Diskon:", `-${formatCurrency(summary.discount)}`));
     }
     if (summary.tax !== undefined && Number(summary.tax) > 0) {
       writeLine(alignLeftRight("Pajak:", formatCurrency(summary.tax)));
@@ -179,10 +281,10 @@ function formatRawEscPos(invoiceData, template = null) {
   writeLine("");
   writeLine("");
   writeLine("");
-  writeLine(""); // FEED FEW LINES FOR DOT MATRIX BEFORE CUT
+  writeLine(""); 
   write(commands.CUT_PARTIAL);
   
-  return Buffer.from(buffer, "ascii").toString("base64");
+  return Buffer.concat(buffers).toString("base64");
 }
 
 module.exports = {
