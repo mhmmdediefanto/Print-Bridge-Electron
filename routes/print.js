@@ -6,6 +6,7 @@ const { formatInvoice, getPrintOptions } = require("../utils/invoiceFormatter");
 const templateService = require("../services/templateService");
 const validationService = require("../services/validationService");
 const printerService = require("../services/printerService");
+const { formatRawEscPos } = require("../utils/rawEscPosFormatter");
 const os = require("os");
 const path = require("path");
 const fs = require("fs");
@@ -466,13 +467,32 @@ router.post("/invoice", async (req, res) => {
       template = templateService.getDefaultTemplate();
     }
 
-    // Format invoice data ke format electron-pos-printer
+    // Check print type
+    const isEscpos = templateId?.includes('escpos') || templateId?.includes('dotmatrix') || printerName?.toLowerCase().includes('tm-u220');
+
+    if (isEscpos) {
+       logger.log("[route] POST /print/invoice -> Using ESC/POS Raw driver mode");
+       const escPosData = formatRawEscPos(invoice, template);
+       
+       req.body = {
+          printerName: printerName,
+          data: escPosData,
+          copies: 1,
+          driver: 'local'
+       };
+       
+       // Redirect to raw print handler internally
+       return router.handle({ 
+           ...req,
+           url: "/raw",
+           path: "/raw"
+       }, res, () => {});
+    }
+
+    // Default: electron-pos-printer Raster format
     const printData = formatInvoice(invoice, template);
 
-    // Get print options
-    const printOptions = getPrintOptions(template, printerName);
-
-    logger.log("[route] POST /print/invoice -> Starting print...", {
+    logger.log("[route] POST /print/invoice -> Starting Raster print...", {
       printerName: printOptions.printerName || "(default)",
       template: template.id,
       itemsCount: invoice.items?.length || 0,
