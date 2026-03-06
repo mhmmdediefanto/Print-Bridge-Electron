@@ -233,6 +233,17 @@ function formatInvoice(invoiceData, template = null) {
   // Header Section (tidak pakai lineText supaya center bener)
   // =========================
   if (header) {
+    // Logo: logoDataUrl (base64) preferred, logoUrl fallback
+    const logoSrc = header.logoDataUrl || header.logoUrl;
+    if (logoSrc) {
+      add({
+        type: "image",
+        url: logoSrc,
+        position: "center",
+        width: "120px",
+        height: "60px",
+      });
+    }
     if (header.storeName) {
       add(
         text(header.storeName, {

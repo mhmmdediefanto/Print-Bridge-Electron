@@ -260,7 +260,11 @@ function startServer() {
   // 3) Auth middleware: skip OPTIONS (preflight)
   server.use((req, res, next) => {
     const key = req.header("X-API-KEY");
+    const reqPath = req.path || req.url?.split("?")[0];
     if (key !== API_KEY) {
+      const rec = key ? `"${key.substring(0, 2)}***" len=${key.length}` : "KOSONG";
+      const exp = API_KEY ? `"${API_KEY.substring(0, 2)}***" len=${API_KEY.length}` : "KOSONG";
+      logger.log(`[bridge] Auth FAILED: ${req.method} ${reqPath} | received: ${rec} | expected: ${exp}`);
       return res.status(401).json({
         ok: false,
         error: {
@@ -269,6 +273,7 @@ function startServer() {
         },
       });
     }
+    logger.log(`[bridge] Auth OK: ${req.method} ${reqPath}`);
     next();
   });
 
