@@ -13,7 +13,7 @@ const commands = {
   ALIGN_CENTER: Buffer.from([0x1b, 0x61, 0x01]),
   ALIGN_RIGHT: Buffer.from([0x1b, 0x61, 0x02]),
   CUT_FULL: Buffer.from([0x1d, 0x56, 0x00]),
-  CUT_PARTIAL: Buffer.from([0x1d, 0x56, 0x42, 0x03]), // GS V 66 3
+  CUT_PARTIAL: Buffer.from([0x1d, 0x56, 0x42, 0x00]), // GS V 66 0 (minimal feed)
 };
 
 /**
@@ -44,11 +44,40 @@ function buildImageBytes(dataUrl, colsWidth = 40) {
     const { width, height } = size;
     const bitmap = img.toBitmap(); // RGBA bytes
     
+    // --- AUTO CROP LOGIC ---
+    let minY = -1;
+    let maxY = -1;
+
+    for (let y = 0; y < height; y++) {
+        let hasPixel = false;
+        for (let x = 0; x < width; x++) {
+            const idx = (y * width + x) * 4;
+            const a = bitmap[idx + 3];
+            const r = bitmap[idx];
+            const g = bitmap[idx + 1];
+            const b_color = bitmap[idx + 2];
+            const luma = (r * 0.299 + g * 0.587 + b_color * 0.114);
+            
+            if (a > 128 && luma < 128) {
+                hasPixel = true;
+                break;
+            }
+        }
+        if (hasPixel) {
+            if (minY === -1) minY = y;
+            maxY = y;
+        }
+    }
+
+    if (minY === -1) return null; // Gambar kosong
+    
+    // Sesuaikan posisi mulai dan tinggi efektif setelah crop
+    const effectiveStartY = minY;
+    const effectiveHeight = maxY + 1;
+    // -----------------------
+
     let buffers = [];
     
-    // Turunkan sedikit posisinya (tambah spasi kosong di atas logo)
-    buffers.push(commands.LF);
-
     buffers.push(commands.ALIGN_CENTER);
 
     // Ubah line spacing ke 16/144 inch agar 8-dot graphics rapat/menyatu (tidak pecah bergaris)
@@ -56,7 +85,7 @@ function buildImageBytes(dataUrl, colsWidth = 40) {
 
     // ESC/POS dot-matrix memakai 1 byte untuk 8 pixel vertikal
     // Format: ESC * m n1 n2 [d1 ... dk]
-    for (let y = 0; y < height; y += 8) {
+    for (let y = effectiveStartY; y < effectiveHeight; y += 8) {
         const m = 0;
         const n1 = width & 0xFF; 
         const n2 = (width >> 8) & 0xFF; 
@@ -68,7 +97,7 @@ function buildImageBytes(dataUrl, colsWidth = 40) {
             let columnByte = 0x00;
             for (let b = 0; b < 8; b++) {
                 const py = y + b;
-                if (py < height) {
+                if (py < effectiveHeight) {
                     const idx = (py * width + x) * 4;
                     if (idx < bitmap.length) {
                        const r = bitmap[idx];
@@ -92,7 +121,7 @@ function buildImageBytes(dataUrl, colsWidth = 40) {
     // Kembalikan setelan line spacing ke standar bawaan printer (1/6 inch)
     buffers.push(Buffer.from([0x1b, 0x32]));
     
-    buffers.push(commands.LF); 
+    // buffers.push(commands.LF); // Dihapus untuk mengurangi spasi
     return Buffer.concat(buffers);
     
   } catch (err) {
@@ -190,7 +219,6 @@ function formatRawEscPos(invoiceData, template = null) {
     if (header.phone) {
       writeLine(`Telp: ${header.phone}`);
     }
-    writeLine("");
   }
 
   // TRANSACTION
@@ -267,7 +295,6 @@ function formatRawEscPos(invoiceData, template = null) {
 
   // FOOTER
   write(commands.ALIGN_CENTER);
-  writeLine("");
   if (footer?.message) {
       const fLines = wordWrapLine(footer.message, cols);
       fLines.forEach(l => writeLine(l));
@@ -277,11 +304,6 @@ function formatRawEscPos(invoiceData, template = null) {
 
   // FEED and CUT
   writeLine("");
-  writeLine("");
-  writeLine("");
-  writeLine("");
-  writeLine("");
-  writeLine(""); 
   write(commands.CUT_PARTIAL);
   
   return Buffer.concat(buffers).toString("base64");
