@@ -10,6 +10,97 @@ const log = require("electron-log");
 const logger = require("./utils/logger");
 const printerService = require("./services/printerService");
 
+const SETTINGS_FILE_NAME = "settings.json";
+const AUTOSTART_KEY = "autoStartEnabled";
+
+function getSettingsFilePath() {
+  // app.getPath("userData") sudah tersedia setelah app ready,
+  // tapi aman juga dipanggil sebelum itu di Electron modern.
+  const userDataDir = app.getPath("userData");
+  return path.join(userDataDir, SETTINGS_FILE_NAME);
+}
+
+function readSettings() {
+  const defaults = { [AUTOSTART_KEY]: true };
+  try {
+    const filePath = getSettingsFilePath();
+    if (!fs.existsSync(filePath)) return defaults;
+    const raw = fs.readFileSync(filePath, "utf8");
+    if (!raw) return defaults;
+    const parsed = JSON.parse(raw);
+    return { ...defaults, ...(parsed && typeof parsed === "object" ? parsed : {}) };
+  } catch (e) {
+    logger.warn("[bridge] Failed to read settings, using defaults:", e?.message || e);
+    return defaults;
+  }
+}
+
+function writeSettings(next) {
+  const defaults = { [AUTOSTART_KEY]: true };
+  try {
+    const filePath = getSettingsFilePath();
+    const merged = { ...defaults, ...(next && typeof next === "object" ? next : {}) };
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    fs.writeFileSync(filePath, JSON.stringify(merged, null, 2), "utf8");
+    return merged;
+  } catch (e) {
+    logger.error("[bridge] Failed to write settings:", e?.message || e);
+    return { ...defaults, ...(next && typeof next === "object" ? next : {}) };
+  }
+}
+
+function getAutoStartSetting() {
+  const settings = readSettings();
+  return Boolean(settings[AUTOSTART_KEY]);
+}
+
+function setAutoStartSetting(enabled) {
+  const settings = readSettings();
+  settings[AUTOSTART_KEY] = Boolean(enabled);
+  writeSettings(settings);
+  return settings[AUTOSTART_KEY];
+}
+
+function getLoginItemParams() {
+  // Windows: gunakan path + args yang benar untuk packaged vs dev.
+  // - packaged: cukup jalankan EXE
+  // - dev (npm start): perlu arg appPath supaya Electron tahu project mana yang dijalankan
+  const loginPath = process.execPath;
+  const args = app.isPackaged ? [] : [app.getAppPath()];
+  return { loginPath, args };
+}
+
+function getAutoStartEffectiveStatus() {
+  try {
+    const { loginPath, args } = getLoginItemParams();
+    const s = app.getLoginItemSettings({ path: loginPath, args });
+    return Boolean(s?.openAtLogin);
+  } catch {
+    return null;
+  }
+}
+
+function applyAutoStart(enabled) {
+  if (process.platform !== "win32") return;
+
+  try {
+    const { loginPath, args } = getLoginItemParams();
+    app.setLoginItemSettings({
+      openAtLogin: Boolean(enabled),
+      openAsHidden: true,
+      path: loginPath,
+      args,
+    });
+
+    const effective = getAutoStartEffectiveStatus();
+    logger.log(
+      `[bridge] Auto-start set to ${Boolean(enabled)} (effective=${effective === null ? "unknown" : effective})`
+    );
+  } catch (e) {
+    logger.error("[bridge] Failed to apply auto-start setting:", e?.message || e);
+  }
+}
+
 // Load .env dari beberapa kemungkinan lokasi:
 // - process.cwd()              → dev run dari project root
 // - path.dirname(process.execPath) → folder EXE hasil install
@@ -143,6 +234,49 @@ function createHiddenWindow() {
   });
 }
 
+function buildTrayMenu() {
+  const autoStartEnabled = getAutoStartSetting();
+  const effective = getAutoStartEffectiveStatus();
+
+  return Menu.buildFromTemplate([
+    {
+      label: `POS Print Bridge v${app.getVersion ? app.getVersion() : "dev"}`,
+      enabled: false,
+    },
+    { label: `Running on :${PORT}`, enabled: false },
+    {
+      label: `Auto-start: ${
+        effective === null ? "unknown" : effective ? "enabled" : "disabled"
+      }`,
+      enabled: false,
+    },
+    { type: "separator" },
+    {
+      label: "Start with Windows",
+      type: "checkbox",
+      checked: autoStartEnabled,
+      click: (menuItem) => {
+        const next = Boolean(menuItem.checked);
+        setAutoStartSetting(next);
+        applyAutoStart(next);
+        refreshTrayMenu();
+      },
+    },
+    { label: "About...", click: () => showAboutDialog() },
+    { type: "separator" },
+    { label: "Quit", click: () => app.quit() },
+  ]);
+}
+
+function refreshTrayMenu() {
+  if (!tray) return;
+  try {
+    tray.setContextMenu(buildTrayMenu());
+  } catch (e) {
+    logger.warn("[bridge] Failed to refresh tray menu:", e?.message || e);
+  }
+}
+
 function createTray() {
   // Gunakan icon.png yang sudah dipakai juga untuk build windows
   const iconPath = path.join(__dirname, "icon.png");
@@ -152,19 +286,8 @@ function createTray() {
   }
 
   tray = new Tray(iconPath);
-  const menu = Menu.buildFromTemplate([
-    {
-      label: `POS Print Bridge v${app.getVersion ? app.getVersion() : "dev"}`,
-      enabled: false,
-    },
-    { label: `Running on :${PORT}`, enabled: false },
-    { type: "separator" },
-    { label: "About...", click: () => showAboutDialog() },
-    { type: "separator" },
-    { label: "Quit", click: () => app.quit() },
-  ]);
   tray.setToolTip("POS Print Bridge");
-  tray.setContextMenu(menu);
+  tray.setContextMenu(buildTrayMenu());
 }
 
 function makeCorsOptions() {
@@ -318,6 +441,16 @@ function startServer() {
 app.whenReady().then(() => {
   try {
     logger.log("[bridge] Starting Print Bridge...");
+
+    // Apply auto-start (Windows) berdasarkan setting user.
+    // Default: enabled. Bisa diubah lewat tray menu.
+    try {
+      const enabled = getAutoStartSetting();
+      applyAutoStart(enabled);
+    } catch (e) {
+      logger.warn("[bridge] Auto-start init failed (continuing):", e?.message || e);
+    }
+
     createHiddenWindow();
     createTray();
 

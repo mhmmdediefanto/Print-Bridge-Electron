@@ -54,6 +54,27 @@ npm start
 
 Aplikasi akan berjalan di background sebagai system tray. Server HTTP akan listen di `http://127.0.0.1:1818` (atau port yang dikonfigurasi).
 
+## Auto-start Windows (Start with Windows)
+
+Mulai versi ini, aplikasi bisa **otomatis berjalan saat Windows login** (jadi tidak perlu dibuka manual setelah PC/laptop restart).
+
+### Cara mengaktifkan / mematikan
+
+1. Jalankan aplikasi seperti biasa (tray icon akan muncul).
+2. Klik kanan tray icon **POS Print Bridge**.
+3. Centang / hilangkan centang menu **Start with Windows**.
+
+Setting ini disimpan di file `settings.json` pada folder `userData` Electron (per-user Windows).
+
+### Cara verifikasi di Windows
+
+- **Task Manager**: buka `Task Manager → Startup` lalu cek apakah ada entry aplikasi dan statusnya `Enabled`.
+- **Registry (per-user)**: `HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run`
+
+### Catatan untuk mode development
+
+Saat menjalankan `npm start`, aplikasi juga bisa menambahkan entry Startup (sesuai setting). Jika tidak diinginkan, matikan lewat tray menu **Start with Windows**.
+
 ## API Documentation
 
 ### Base URL
