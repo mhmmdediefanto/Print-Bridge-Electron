@@ -253,6 +253,9 @@ function formatInvoice(invoiceData, template = null) {
         })
       );
     }
+    if (header.npwp) {
+      add(text(header.npwp, { textAlign: "center", fontSize: "11px" }));
+    }
     if (header.address) {
       add(text(header.address, { textAlign: "center", fontSize: "11px" }));
     }
@@ -339,7 +342,10 @@ function formatInvoice(invoiceData, template = null) {
   // Footer
   // =========================
   if (footer?.message) {
-    add(text(footer.message, { textAlign: "center", fontSize: "11px" }));
+    const footerLines = String(footer.message).split("\n");
+    footerLines.forEach((line) => {
+      add(text(line.trim(), { textAlign: "center", fontSize: "11px" }));
+    });
   } else {
     add(
       text("Terima kasih atas kunjungan Anda", {

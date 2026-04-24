@@ -212,6 +212,9 @@ function formatRawEscPos(invoiceData, template = null) {
       writeLine(header.storeName);
       write(commands.BOLD_OFF);
     }
+    if (header.npwp) {
+      writeLine(header.npwp);
+    }
     if (header.address) {
        let addressLines = wordWrapLine(header.address, cols);
        addressLines.forEach(l => writeLine(l));
@@ -296,8 +299,11 @@ function formatRawEscPos(invoiceData, template = null) {
   // FOOTER
   write(commands.ALIGN_CENTER);
   if (footer?.message) {
-      const fLines = wordWrapLine(footer.message, cols);
-      fLines.forEach(l => writeLine(l));
+      const msgLines = String(footer.message).split("\n");
+      msgLines.forEach(ml => {
+        const fLines = wordWrapLine(ml.trim(), cols);
+        fLines.forEach(l => writeLine(l));
+      });
   } else {
       writeLine("Terima kasih atas kunjungan Anda");
   }
