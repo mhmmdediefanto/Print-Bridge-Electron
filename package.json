@@ -1,6 +1,6 @@
 {
   "name": "printer",
-  "version": "1.0.6",
+  "version": "1.0.9",
   "description": "POS Print Bridge",
   "main": "main.js",
   "scripts": {
@@ -9,9 +9,10 @@
     "build": "electron-builder --windows",
     "build:mac": "electron-builder --mac",
     "build:linux": "electron-builder --linux",
-    "publish": "electron-builder --windows --publish always",
-    "publish:mac": "electron-builder --mac --publish always",
-    "publish:all": "electron-builder -wml --publish always"
+    "check-token": "node check-token.js",
+    "publish": "node check-token.js --windows --publish always",
+    "publish:mac": "node check-token.js --mac --publish always",
+    "publish:all": "node check-token.js -wml --publish always"
   },
   "build": {
     "appId": "com.xposure.posprinter",
