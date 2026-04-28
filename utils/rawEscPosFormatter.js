@@ -286,7 +286,15 @@ function formatRawEscPos(invoiceData, template = null) {
 
   // PAYMENT
   if (payment) {
-    if (payment.method) writeLine(alignLeftRight("Pembayaran:", payment.method));
+    if (payment.splitMethods && payment.splitMethods.length > 1) {
+       writeLine("Pembayaran (Split):");
+       payment.splitMethods.forEach(method => {
+           writeLine(alignLeftRight(`  ${method.name}`, formatCurrency(method.amount)));
+       });
+    } else {
+       if (payment.method) writeLine(alignLeftRight("Pembayaran:", payment.method));
+    }
+
     if (payment.paid !== undefined) {
       writeLine(alignLeftRight("Bayar:", formatCurrency(payment.paid)));
     }

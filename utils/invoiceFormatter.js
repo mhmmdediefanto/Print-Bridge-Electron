@@ -325,7 +325,15 @@ function formatInvoice(invoiceData, template = null) {
   // Payment
   // =========================
   if (payment) {
-    if (payment.method) add(labelValue("Pembayaran", payment.method));
+    if (payment.splitMethods && payment.splitMethods.length > 1) {
+      add(lineText("Pembayaran (Split):", { fontWeight: "700" }));
+      payment.splitMethods.forEach((method) => {
+         add(labelValue(`  ${method.name}`, formatCurrency(method.amount)));
+      });
+    } else {
+      if (payment.method) add(labelValue("Pembayaran", payment.method));
+    }
+    
     if (payment.paid !== undefined)
       add(labelValue("Bayar", formatCurrency(payment.paid)));
     if (payment.change !== undefined && Number(payment.change) > 0) {
