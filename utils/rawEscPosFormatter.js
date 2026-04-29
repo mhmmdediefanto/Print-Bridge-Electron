@@ -233,75 +233,130 @@ function formatRawEscPos(invoiceData, template = null) {
     separator();
   }
 
-  // ITEMS
-  if (items?.length) {
-    const qtyW = 4;
-    const priceW = 9;
-    const descW = cols - qtyW - priceW;
-
-    items.forEach((item) => {
-      const name = item?.name || item?.productName || "";
-      const nameLines = wordWrapLine(name, cols);
-      
-      const qty = item?.qty ?? item?.quantity ?? 0;
-      const price = item?.price ?? 0;
-      const sub = item?.subtotal ?? Number(qty) * Number(price);
-
-      nameLines.forEach((ln) => writeLine(ln));
-
-      const qtyStr = `${qty}x`;
-      const priceStr = formatCurrency(price);
-      const subStr = formatCurrency(sub);
-      
-      const leftPart = `  ${qtyStr} @ ${priceStr}`;
-      writeLine(alignLeftRight(leftPart, subStr, cols));
-      
-      // DISKON
-      const diskon = item?.discount ?? 0;
-      if (diskon > 0) {
-          writeLine(alignLeftRight(`  Diskon/Item`, `-${formatCurrency(diskon)}`));
+  if (invoiceData.isReturnExchange) {
+    write(commands.ALIGN_CENTER);
+    write(commands.BOLD_ON);
+    writeLine(invoiceData.returnTitle || "RETUR EXCHANGE");
+    write(commands.BOLD_OFF);
+    write(commands.ALIGN_LEFT);
+    separator();
+    
+    if (invoiceData.returnedItems?.length) {
+        write(commands.BOLD_ON);
+        writeLine("[BARANG KEMBALI]");
+        write(commands.BOLD_OFF);
+        invoiceData.returnedItems.forEach(item => {
+            const name = item?.name || item?.productName || "";
+            const nameLines = wordWrapLine(name, cols);
+            nameLines.forEach((ln) => writeLine(ln));
+            const qtyStr = `-${item.qty}x`;
+            const priceStr = formatCurrency(item.price);
+            const subStr = `-${formatCurrency(item.subtotal)}`;
+            writeLine(alignLeftRight(`  ${qtyStr} @ ${priceStr}`, subStr, cols));
+        });
+        separator();
+    }
+    
+    if (invoiceData.exchangedItems?.length) {
+        write(commands.BOLD_ON);
+        writeLine("[BARANG GANTI]");
+        write(commands.BOLD_OFF);
+        invoiceData.exchangedItems.forEach(item => {
+            const name = item?.name || item?.productName || "";
+            const nameLines = wordWrapLine(name, cols);
+            nameLines.forEach((ln) => writeLine(ln));
+            const qtyStr = `${item.qty}x`;
+            const priceStr = formatCurrency(item.price);
+            const subStr = formatCurrency(item.subtotal);
+            writeLine(alignLeftRight(`  ${qtyStr} @ ${priceStr}`, subStr, cols));
+        });
+        separator();
+    }
+    
+    if (summary) {
+        if (summary.totalRetur !== undefined) writeLine(alignLeftRight("Total Retur:", `-${formatCurrency(summary.totalRetur)}`));
+        if (summary.totalBelanja !== undefined) writeLine(alignLeftRight("Total Belanja:", formatCurrency(summary.totalBelanja)));
+        separator();
+        if (summary.selisih !== undefined) {
+           write(commands.BOLD_ON);
+           writeLine(alignLeftRight("SISA / KEMBALIAN:", formatCurrency(summary.selisih)));
+           write(commands.BOLD_OFF);
+        }
+        separator();
+    }
+  } else {
+    // ITEMS
+    if (items?.length) {
+      const qtyW = 4;
+      const priceW = 9;
+      const descW = cols - qtyW - priceW;
+  
+      items.forEach((item) => {
+        const name = item?.name || item?.productName || "";
+        const nameLines = wordWrapLine(name, cols);
+        
+        const qty = item?.qty ?? item?.quantity ?? 0;
+        const price = item?.price ?? 0;
+        const sub = item?.subtotal ?? Number(qty) * Number(price);
+  
+        nameLines.forEach((ln) => writeLine(ln));
+  
+        const qtyStr = `${qty}x`;
+        const priceStr = formatCurrency(price);
+        const subStr = formatCurrency(sub);
+        
+        const leftPart = `  ${qtyStr} @ ${priceStr}`;
+        writeLine(alignLeftRight(leftPart, subStr, cols));
+        
+        // DISKON
+        const diskon = item?.discount ?? 0;
+        if (diskon > 0) {
+            writeLine(alignLeftRight(`  Diskon/Item`, `-${formatCurrency(diskon)}`));
+        }
+      });
+      separator();
+    }
+  
+    // SUMMARY
+    if (summary) {
+      if (summary.subtotal !== undefined) {
+        writeLine(alignLeftRight("Subtotal:", formatCurrency(summary.subtotal)));
       }
-    });
-    separator();
-  }
-
-  // SUMMARY
-  if (summary) {
-    if (summary.subtotal !== undefined) {
-      writeLine(alignLeftRight("Subtotal:", formatCurrency(summary.subtotal)));
+      if (summary.discount !== undefined && Number(summary.discount) > 0) {
+        writeLine(alignLeftRight("Diskon:", `-${formatCurrency(summary.discount)}`));
+      }
+      if (summary.tax !== undefined && Number(summary.tax) > 0) {
+        writeLine(alignLeftRight("Pajak:", formatCurrency(summary.tax)));
+      }
+      if (summary.total !== undefined) {
+        write(commands.BOLD_ON);
+        writeLine(alignLeftRight("TOTAL:", formatCurrency(summary.total)));
+        write(commands.BOLD_OFF);
+      }
+      separator();
     }
-    if (summary.discount !== undefined && Number(summary.discount) > 0) {
-      writeLine(alignLeftRight("Diskon:", `-${formatCurrency(summary.discount)}`));
+  
+    // PAYMENT
+    if (payment) {
+      if (payment.splitMethods && payment.splitMethods.length > 1) {
+         writeLine("Pembayaran (Split):");
+         payment.splitMethods.forEach(method => {
+             writeLine(alignLeftRight(`  ${method.name}`, formatCurrency(method.amount)));
+         });
+      } else {
+         if (payment.method) writeLine(alignLeftRight("Pembayaran:", payment.method));
+      }
+  
+      if (payment.paid !== undefined) {
+        writeLine(alignLeftRight("Bayar:", formatCurrency(payment.paid)));
+      }
+      if (payment.change !== undefined && Number(payment.change) > 0) {
+        writeLine(alignLeftRight("Kembalian:", formatCurrency(payment.change)));
+      }
+      separator();
     }
-    if (summary.tax !== undefined && Number(summary.tax) > 0) {
-      writeLine(alignLeftRight("Pajak:", formatCurrency(summary.tax)));
-    }
-    if (summary.total !== undefined) {
-      write(commands.BOLD_ON);
-      writeLine(alignLeftRight("TOTAL:", formatCurrency(summary.total)));
-      write(commands.BOLD_OFF);
-    }
-    separator();
-  }
-
-  // PAYMENT
-  if (payment) {
-    if (payment.splitMethods && payment.splitMethods.length > 1) {
-       writeLine("Pembayaran (Split):");
-       payment.splitMethods.forEach(method => {
-           writeLine(alignLeftRight(`  ${method.name}`, formatCurrency(method.amount)));
-       });
-    } else {
-       if (payment.method) writeLine(alignLeftRight("Pembayaran:", payment.method));
-    }
-
-    if (payment.paid !== undefined) {
-      writeLine(alignLeftRight("Bayar:", formatCurrency(payment.paid)));
-    }
-    if (payment.change !== undefined && Number(payment.change) > 0) {
-      writeLine(alignLeftRight("Kembalian:", formatCurrency(payment.change)));
-    }
-    separator();
+  
+  
   }
 
   // FOOTER
