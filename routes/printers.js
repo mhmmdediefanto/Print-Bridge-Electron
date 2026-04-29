@@ -71,4 +71,44 @@ router.get("/check", async (req, res) => {
   }
 });
 
+/**
+ * GET /printers/check-usb
+ * Check USB printer status via WMI
+ * Query params: target (Printer Name)
+ */
+router.get("/check-usb", async (req, res) => {
+  try {
+    const { target } = req.query;
+
+    if (!target) {
+      return res.status(400).json({
+        ok: false,
+        error: {
+          code: "MISSING_TARGET",
+          message: "Parameter 'target' (Printer Name) is required",
+        },
+      });
+    }
+
+    const status = await printerService.checkUsbPrinter(target);
+
+    logger.log(`[route] GET /printers/check-usb -> target="${target}" online=${status.online}`);
+
+    res.json({
+      ok: true,
+      target,
+      status, // { online, printerStatus, statusLabel, isOffline, reason }
+    });
+  } catch (e) {
+    logger.error(`[route] GET /printers/check-usb failed for "${req.query.target}":`, e);
+    res.status(500).json({
+      ok: false,
+      error: {
+        code: "CHECK_USB_ERROR",
+        message: String(e?.message || e),
+      },
+    });
+  }
+});
+
 module.exports = router;
