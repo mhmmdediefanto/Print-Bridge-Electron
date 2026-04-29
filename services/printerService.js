@@ -162,7 +162,7 @@ function checkNetworkPrinter(ip, port = 9100, timeout = 2000) {
   });
 }
 
-const { exec } = require("child_process");
+const { exec, execFile } = require("child_process");
 const os = require("os");
 
 module.exports = {
@@ -203,7 +203,7 @@ function checkUsbPrinter(printerName, timeoutMs = 4000) {
 }
 
 // ─────────────────────────────────────────────
-// Windows: WMI via PowerShell
+// Windows: WMI via PowerShell (Secure Base64)
 // ─────────────────────────────────────────────
 function _checkUsbWindows(printerName, timeoutMs, resolve) {
   const safeName = printerName.replace(/'/g, "''");
@@ -211,17 +211,21 @@ function _checkUsbWindows(printerName, timeoutMs, resolve) {
   const psScript = `
     $p = Get-WmiObject Win32_Printer | Where-Object { $_.Name -eq '${safeName}' };
     if ($null -eq $p) {
-      Write-Output 'NOT_FOUND'
+      Write-Output 'NOT_FOUND';
     } else {
-      $status  = if ($null -ne $p.PrinterStatus) { $p.PrinterStatus } else { -1 }
-      $offline = if ($null -ne $p.WorkOffline)   { $p.WorkOffline }   else { $true }
-      Write-Output "STATUS=$status;OFFLINE=$offline"
+      $status  = if ($null -ne $p.PrinterStatus) { $p.PrinterStatus } else { -1 };
+      $offline = if ($null -ne $p.WorkOffline)   { $p.WorkOffline }   else { $true };
+      Write-Output "STATUS=$status;OFFLINE=$offline";
     }
   `.trim();
 
-  const cmd = `powershell -NoProfile -NonInteractive -Command "${psScript.replace(/\n\s*/g, " ")}"`;
+  // Konversi ke UTF-16LE lalu Base64 (Syarat wajib -EncodedCommand PowerShell)
+  // Ini mencegah 100% resiko Command Injection
+  const buffer = Buffer.from(psScript, "utf16le");
+  const encodedCmd = buffer.toString("base64");
+  const cmd = `powershell -NoProfile -NonInteractive -EncodedCommand ${encodedCmd}`;
 
-  logger.log(`[printerService] _checkUsbWindows -> querying WMI...`);
+  logger.log(`[printerService] _checkUsbWindows -> querying WMI via EncodedCommand...`);
 
   const timer = setTimeout(() => {
     resolve({ online: false, reason: "WMI query timeout" });
@@ -277,26 +281,23 @@ function _checkUsbWindows(printerName, timeoutMs, resolve) {
 }
 
 // ─────────────────────────────────────────────
-// Linux: lpstat + lpinfo (CUPS)
+// Linux: lpstat + lpinfo (CUPS) (Secure execFile)
 // ─────────────────────────────────────────────
 function _checkUsbLinux(printerName, timeoutMs, resolve) {
-  const safeName = printerName.replace(/"/g, '\\"');
-
-  const cmd = `lpstat -p "${safeName}" 2>&1`;
-
-  logger.log(`[printerService] _checkUsbLinux -> running: ${cmd}`);
+  logger.log(`[printerService] _checkUsbLinux -> running: lpstat -p "${printerName}"`);
 
   const timer = setTimeout(() => {
     resolve({ online: false, reason: "lpstat timeout" });
   }, timeoutMs);
 
-  exec(cmd, { timeout: timeoutMs }, (error, stdout) => {
+  // Menggunakan execFile mencegah Bash Command Injection
+  execFile("lpstat", ["-p", printerName], { timeout: timeoutMs }, (error, stdout, stderr) => {
     clearTimeout(timer);
 
-    const output = (stdout || "").trim().toLowerCase();
+    const output = (stdout || stderr || "").trim().toLowerCase();
     logger.log(`[printerService] _checkUsbLinux lpstat result: "${output}"`);
 
-    if (error && !output) {
+    if (error && !output && !output.includes("printer")) {
       return resolve({ online: false, reason: "Printer not found in CUPS" });
     }
 
@@ -376,12 +377,12 @@ function _checkUsbDeviceLinux(printerName, timeoutMs, callback) {
       `[printerService] _checkUsbDeviceLinux lpinfo: "${output.substring(0, 200)}..."`,
     );
 
-    const nameKey = printerName.toLowerCase().replace(/[-_\s]/g, "");
+    const nameKey = printerName.toLowerCase().replace(/[^a-z0-9]/g, "");
     const found = output
       .split("\n")
       .filter((line) => line.includes("usb://"))
       .some((line) => {
-        const lineKey = line.replace(/[-_\s]/g, "");
+        const lineKey = line.toLowerCase().replace(/[^a-z0-9]/g, "");
         return lineKey.includes(nameKey);
       });
 
