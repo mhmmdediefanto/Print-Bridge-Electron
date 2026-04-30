@@ -279,10 +279,30 @@ function formatRawEscPos(invoiceData, template = null) {
         separator();
         if (summary.selisih !== undefined) {
            write(commands.BOLD_ON);
-           writeLine(alignLeftRight("SISA / KEMBALIAN:", formatCurrency(summary.selisih)));
+           let selisihLabel = summary.selisih > 0 ? "KURANG BAYAR:" : (summary.selisih < 0 ? "KEMBALIAN CUST:" : "SELISIH:");
+           writeLine(alignLeftRight(selisihLabel, formatCurrency(Math.abs(summary.selisih))));
            write(commands.BOLD_OFF);
         }
         separator();
+    }
+
+    if (payment) {
+      if (payment.splitMethods && payment.splitMethods.length > 1) {
+         writeLine("Pembayaran (Split):");
+         payment.splitMethods.forEach(method => {
+             writeLine(alignLeftRight(`  ${method.name}`, formatCurrency(method.amount)));
+         });
+      } else {
+         if (payment.method) writeLine(alignLeftRight("Pembayaran:", payment.method));
+      }
+  
+      if (payment.paid !== undefined) {
+        writeLine(alignLeftRight("Tunai:", formatCurrency(payment.paid)));
+      }
+      if (payment.change !== undefined && Number(payment.change) >= 0) {
+        writeLine(alignLeftRight("Kembalian:", formatCurrency(payment.change)));
+      }
+      separator();
     }
   } else {
     // ITEMS
