@@ -253,6 +253,11 @@ function formatRawEscPos(invoiceData, template = null) {
             const priceStr = formatCurrency(item.price);
             const subStr = `-${formatCurrency(item.subtotal)}`;
             writeLine(alignLeftRight(`  ${qtyStr} @ ${priceStr}`, subStr, cols));
+
+            const diskon = Number(item?.discount ?? 0);
+            if (diskon > 0) {
+                writeLine(alignLeftRight(`  Diskon/Item`, `-${formatCurrency(diskon)}`, cols));
+            }
         });
         separator();
     }
@@ -265,15 +270,28 @@ function formatRawEscPos(invoiceData, template = null) {
             const name = item?.name || item?.productName || "";
             const nameLines = wordWrapLine(name, cols);
             nameLines.forEach((ln) => writeLine(ln));
-            const qtyStr = `${item.qty}x`;
-            const priceStr = formatCurrency(item.price);
-            const subStr = formatCurrency(item.subtotal);
+
+            const qty = Math.max(1, Number(item?.qty ?? 0));
+            const grossSubtotal = Number(item?.grossSubtotal ?? item?.subtotal ?? 0);
+            const unitPrice = qty > 0 ? Math.round(grossSubtotal / qty) : Number(item?.price ?? 0);
+            const qtyStr = `${qty}x`;
+            const priceStr = formatCurrency(unitPrice);
+            const subStr = formatCurrency(grossSubtotal);
             writeLine(alignLeftRight(`  ${qtyStr} @ ${priceStr}`, subStr, cols));
+
+            const diskon = Number(item?.discount ?? 0);
+            if (diskon > 0) {
+                writeLine(alignLeftRight(`  Diskon/Item`, `-${formatCurrency(diskon)}`, cols));
+            }
         });
         separator();
     }
     
     if (summary) {
+        if (summary.subtotal !== undefined) writeLine(alignLeftRight("Subtotal:", formatCurrency(summary.subtotal)));
+        if (summary.discount !== undefined && Number(summary.discount) > 0) {
+            writeLine(alignLeftRight("Diskon:", `-${formatCurrency(summary.discount)}`));
+        }
         if (summary.totalRetur !== undefined) writeLine(alignLeftRight("Total Retur:", `-${formatCurrency(summary.totalRetur)}`));
         if (summary.totalBelanja !== undefined) writeLine(alignLeftRight("Total Belanja:", formatCurrency(summary.totalBelanja)));
         separator();
@@ -297,7 +315,7 @@ function formatRawEscPos(invoiceData, template = null) {
       }
   
       if (payment.paid !== undefined) {
-        writeLine(alignLeftRight("Tunai:", formatCurrency(payment.paid)));
+        writeLine(alignLeftRight("Total Bayar:", formatCurrency(payment.paid)));
       }
       if (payment.change !== undefined && Number(payment.change) >= 0) {
         writeLine(alignLeftRight("Kembalian:", formatCurrency(payment.change)));
