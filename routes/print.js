@@ -7,6 +7,7 @@ const templateService = require("../services/templateService");
 const validationService = require("../services/validationService");
 const printerService = require("../services/printerService");
 const { formatRawEscPos } = require("../utils/rawEscPosFormatter");
+const { formatRawShiftKasir } = require("../utils/rawShiftKasirFormatter");
 const os = require("os");
 const path = require("path");
 const fs = require("fs");
@@ -365,6 +366,89 @@ router.post("/raw", async (req, res) => {
         code: "RAW_PRINT_ERROR",
         message: String(e?.message || e),
         hint: hint,
+      },
+    });
+  }
+});
+
+/**
+ * POST /print/shift-kasir
+ * Print ringkasan shift kasir langsung via raw ESC/POS.
+ * Jalur ini sengaja tidak memakai preview PDF/raster Chromium.
+ */
+router.post("/shift-kasir", async (req, res) => {
+  try {
+    if (!req.body || typeof req.body !== "object" || Array.isArray(req.body)) {
+      return res.status(400).json({
+        ok: false,
+        error: {
+          code: "INVALID_PAYLOAD",
+          message: "Request body must be a JSON object",
+        },
+      });
+    }
+
+    const { printerName, shift, data, driver, copies, options } = req.body;
+    const payload = shift ?? data;
+
+    if (!printerName || typeof printerName !== "string") {
+      return res.status(400).json({
+        ok: false,
+        error: {
+          code: "MISSING_PRINTER",
+          message: "printerName is required",
+        },
+      });
+    }
+
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+      return res.status(400).json({
+        ok: false,
+        error: {
+          code: "MISSING_SHIFT_DATA",
+          message: "shift data is required",
+          hint: "Send payload in `shift` or `data` field",
+        },
+      });
+    }
+
+    const rawData = formatRawShiftKasir(payload, options);
+
+    logger.log("[route] POST /print/shift-kasir -> direct raw print", {
+      printerName,
+      driver: driver || "local",
+      copies: Math.max(1, parseInt(copies, 10) || 1),
+      title: payload?.title || payload?.shift?.title || "RINGKASAN SHIFT KASIR",
+    });
+
+    req.body = {
+      printerName,
+      data: rawData,
+      copies: Math.max(1, parseInt(copies, 10) || 1),
+      driver: driver || "local",
+    };
+
+    return router.handle(
+      {
+        ...req,
+        url: "/raw",
+        path: "/raw",
+      },
+      res,
+      () => {}
+    );
+  } catch (e) {
+    logger.error("[route] POST /print/shift-kasir failed:", {
+      error: e?.message || String(e),
+      code: e?.code,
+    });
+
+    res.status(500).json({
+      ok: false,
+      error: {
+        code: "SHIFT_PRINT_ERROR",
+        message: String(e?.message || e),
+        hint: "Check shift payload structure and printer connection",
       },
     });
   }
