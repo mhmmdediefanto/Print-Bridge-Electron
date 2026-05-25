@@ -139,6 +139,30 @@ function normalizeReturns(shift) {
   }));
 }
 
+function normalizeExpenses(shift) {
+  const expenseSources = [
+    shift.expenses,
+    shift.expenseItems,
+    shift.pengeluaran,
+    shift.pengeluaranShift,
+  ];
+
+  const firstArray = expenseSources.find(Array.isArray);
+  if (!firstArray) return [];
+
+  return firstArray.map((item) => ({
+    title: item.title ?? item.name ?? item.label ?? item.nama_pengeluaran ?? "Pengeluaran",
+    subtitle:
+      item.subtitle ??
+      item.detail ??
+      item.keterangan ??
+      item.created_by_name ??
+      item.inputBy ??
+      "",
+    amount: item.amount ?? item.total ?? item.nominal ?? item.value ?? 0,
+  }));
+}
+
 function normalizeTotals(shift) {
   const totals = [];
 
@@ -153,6 +177,7 @@ function normalizeTotals(shift) {
   const fieldMap = [
     ["TOTAL UANG MASUK", shift.totalUangMasuk ?? shift.total_uang_masuk],
     ["RETUR CASH KELUAR", shift.returCashKeluar ?? shift.retur_cash_keluar],
+    ["TOTAL PENGELUARAN", shift.totalPengeluaran ?? shift.total_pengeluaran],
     ["KAS BERSIH SHIFT", shift.kasBersihShift ?? shift.kas_bersih_shift],
     ["ESTIMASI UANG FISIK", shift.estimasiUangFisik ?? shift.estimasi_uang_fisik],
   ];
@@ -203,6 +228,7 @@ function formatRawShiftKasir(shiftData = {}, options = {}) {
   const shift = shiftData?.shift ?? shiftData;
   const payments = normalizePayments(shift);
   const returns = normalizeReturns(shift);
+  const expenses = normalizeExpenses(shift);
   const totals = normalizeTotals(shift);
   const notes = shift.notes ?? shift.catatan ?? shift.note ?? "";
 
@@ -266,6 +292,27 @@ function formatRawShiftKasir(shiftData = {}, options = {}) {
 
     for (const entry of returns) {
       for (const line of twoLineRow(entry.title, formatMoney(entry.amount), cols)) {
+        writeLine(line);
+      }
+
+      if (entry.subtitle) {
+        for (const line of wordWrap(entry.subtitle, cols)) {
+          writeLine(line);
+        }
+      }
+    }
+  }
+
+  if (expenses.length > 0) {
+    separator();
+    for (const title of buildSectionTitle("PENGELUARAN SHIFT", cols)) {
+      write(commands.BOLD_ON);
+      writeLine(title);
+      write(commands.BOLD_OFF);
+    }
+
+    for (const entry of expenses) {
+      for (const line of twoLineRow(String(entry.title).toUpperCase(), `-${formatMoney(entry.amount)}`, cols)) {
         writeLine(line);
       }
 
