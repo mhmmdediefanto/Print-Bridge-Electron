@@ -413,6 +413,8 @@ function startServer() {
   logger.log("  - GET  /templates/:id");
   logger.log("  - POST /print");
   logger.log("  - POST /print/invoice");
+  logger.log("  - POST /print/pengeluaran-shift");
+  logger.log("  - POST /print/shift-kasir");
   logger.log("  - POST /print/validate");
   logger.log("  - POST /print/test-print");
 

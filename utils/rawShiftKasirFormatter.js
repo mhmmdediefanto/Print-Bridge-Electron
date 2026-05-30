@@ -163,8 +163,14 @@ function normalizeExpenses(shift) {
   }));
 }
 
+function sumExpenses(expenses) {
+  return expenses.reduce((total, item) => total + normalizeMoney(item.amount), 0);
+}
+
 function normalizeTotals(shift) {
   const totals = [];
+  const totalCashMasuk = shift.totalCashMasuk ?? shift.total_cash_masuk;
+  const totalNonCashMasuk = shift.totalNonCashMasuk ?? shift.total_non_cash_masuk;
 
   if (Array.isArray(shift.totals)) {
     return shift.totals.map((item) => ({
@@ -175,7 +181,8 @@ function normalizeTotals(shift) {
   }
 
   const fieldMap = [
-    ["TOTAL UANG MASUK", shift.totalUangMasuk ?? shift.total_uang_masuk],
+    ["TUNAI MASUK", totalCashMasuk],
+    ["NON TUNAI MASUK", totalNonCashMasuk],
     ["RETUR CASH KELUAR", shift.returCashKeluar ?? shift.retur_cash_keluar],
     ["TOTAL PENGELUARAN", shift.totalPengeluaran ?? shift.total_pengeluaran],
     ["KAS BERSIH SHIFT", shift.kasBersihShift ?? shift.kas_bersih_shift],
@@ -229,8 +236,15 @@ function formatRawShiftKasir(shiftData = {}, options = {}) {
   const payments = normalizePayments(shift);
   const returns = normalizeReturns(shift);
   const expenses = normalizeExpenses(shift);
+  const totalPengeluaran = normalizeMoney(
+    shift.totalPengeluaran ?? shift.total_pengeluaran ?? sumExpenses(expenses)
+  );
   const totals = normalizeTotals(shift);
   const notes = shift.notes ?? shift.catatan ?? shift.note ?? "";
+  const kasAwal = shift.kasAwal ?? shift.kas_awal;
+  const kasAkhir = shift.kasAkhir ?? shift.kas_akhir;
+  const setorTunai = shift.setorTunai ?? shift.setor_tunai;
+  const saldoAwalBerikutnya = shift.saldoAwalBerikutnya ?? shift.saldo_awal_berikutnya;
 
   write(commands.INIT);
   write(commands.ALIGN_LEFT);
@@ -250,8 +264,10 @@ function formatRawShiftKasir(shiftData = {}, options = {}) {
     ["Opened", shift.openedAt ?? shift.opened_at ?? shift.opened],
     ["Closed", shift.closedAt ?? shift.closed_at ?? shift.closed],
     ["Status", shift.statusLabel ?? shift.status_label ?? shift.status],
-    ["Kas Awal", shift.kasAwal ?? shift.kas_awal ? formatMoney(shift.kasAwal ?? shift.kas_awal) : ""],
-    ["Kas Akhir", shift.kasAkhir ?? shift.kas_akhir ? formatMoney(shift.kasAkhir ?? shift.kas_akhir) : ""],
+    ["Kas Awal", kasAwal !== undefined && kasAwal !== null ? formatMoney(kasAwal) : ""],
+    ["Kas Akhir", kasAkhir !== undefined && kasAkhir !== null ? formatMoney(kasAkhir) : ""],
+    ["Setor Tunai", setorTunai !== undefined && setorTunai !== null ? formatMoney(setorTunai) : ""],
+    ["Saldo Awal Berikutnya", saldoAwalBerikutnya !== undefined && saldoAwalBerikutnya !== null ? formatMoney(saldoAwalBerikutnya) : ""],
     ["Total Penjualan", shift.totalPenjualan ?? shift.total_penjualan ?? shift.jumlahPenjualan ?? shift.jumlah_penjualan],
     ["Total Retur", shift.totalRetur ?? shift.total_retur ?? shift.jumlahRetur ?? shift.jumlah_retur],
   ];
@@ -311,17 +327,10 @@ function formatRawShiftKasir(shiftData = {}, options = {}) {
       write(commands.BOLD_OFF);
     }
 
-    for (const entry of expenses) {
-      for (const line of twoLineRow(String(entry.title).toUpperCase(), `-${formatMoney(entry.amount)}`, cols)) {
-        writeLine(line);
-      }
-
-      if (entry.subtitle) {
-        for (const line of wordWrap(entry.subtitle, cols)) {
-          writeLine(line);
-        }
-      }
+    for (const line of twoLineRow("TOTAL PENGELUARAN SHIFT", `-${formatMoney(totalPengeluaran)}`, cols)) {
+      writeLine(line);
     }
+    writeLine(`${expenses.length} item pengeluaran`);
   }
 
   if (totals.length > 0) {

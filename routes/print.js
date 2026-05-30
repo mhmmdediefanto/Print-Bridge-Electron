@@ -8,6 +8,7 @@ const validationService = require("../services/validationService");
 const printerService = require("../services/printerService");
 const { formatRawEscPos } = require("../utils/rawEscPosFormatter");
 const { formatRawShiftKasir } = require("../utils/rawShiftKasirFormatter");
+const { formatRawPengeluaranShift } = require("../utils/rawPengeluaranShiftFormatter");
 const os = require("os");
 const path = require("path");
 const fs = require("fs");
@@ -449,6 +450,88 @@ router.post("/shift-kasir", async (req, res) => {
         code: "SHIFT_PRINT_ERROR",
         message: String(e?.message || e),
         hint: "Check shift payload structure and printer connection",
+      },
+    });
+  }
+});
+
+/**
+ * POST /print/pengeluaran-shift
+ * Print daftar pengeluaran shift langsung via raw ESC/POS.
+ */
+router.post("/pengeluaran-shift", async (req, res) => {
+  try {
+    if (!req.body || typeof req.body !== "object" || Array.isArray(req.body)) {
+      return res.status(400).json({
+        ok: false,
+        error: {
+          code: "INVALID_PAYLOAD",
+          message: "Request body must be a JSON object",
+        },
+      });
+    }
+
+    const { printerName, expenseShift, data, driver, copies, options } = req.body;
+    const payload = expenseShift ?? data;
+
+    if (!printerName || typeof printerName !== "string") {
+      return res.status(400).json({
+        ok: false,
+        error: {
+          code: "MISSING_PRINTER",
+          message: "printerName is required",
+        },
+      });
+    }
+
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+      return res.status(400).json({
+        ok: false,
+        error: {
+          code: "MISSING_EXPENSE_SHIFT_DATA",
+          message: "expense shift data is required",
+          hint: "Send payload in `expenseShift` or `data` field",
+        },
+      });
+    }
+
+    const rawData = formatRawPengeluaranShift(payload, options);
+
+    logger.log("[route] POST /print/pengeluaran-shift -> direct raw print", {
+      printerName,
+      driver: driver || "local",
+      copies: Math.max(1, parseInt(copies, 10) || 1),
+      title: payload?.title || payload?.expenseShift?.title || "PENGELUARAN SHIFT",
+    });
+
+    req.body = {
+      printerName,
+      data: rawData,
+      copies: Math.max(1, parseInt(copies, 10) || 1),
+      driver: driver || "local",
+    };
+
+    return router.handle(
+      {
+        ...req,
+        url: "/raw",
+        path: "/raw",
+      },
+      res,
+      () => {}
+    );
+  } catch (e) {
+    logger.error("[route] POST /print/pengeluaran-shift failed:", {
+      error: e?.message || String(e),
+      code: e?.code,
+    });
+
+    res.status(500).json({
+      ok: false,
+      error: {
+        code: "EXPENSE_SHIFT_PRINT_ERROR",
+        message: String(e?.message || e),
+        hint: "Check expense shift payload structure and printer connection",
       },
     });
   }
