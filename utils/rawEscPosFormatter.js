@@ -166,6 +166,15 @@ function formatRawEscPos(invoiceData, template = null) {
       minimumFractionDigits: 0,
     }).format(n);
   };
+
+  const formatPercent = (value) => {
+    const n = Number(value);
+    if (!Number.isFinite(n) || n <= 0) return "";
+    return `${new Intl.NumberFormat("id-ID", {
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 2,
+    }).format(n)}%`;
+  };
   
   const alignLeftRight = (left, right, width = cols) => {
       const spc = width - left.length - right.length;
@@ -256,7 +265,9 @@ function formatRawEscPos(invoiceData, template = null) {
 
             const diskon = Number(item?.discount ?? 0);
             if (diskon > 0) {
-                writeLine(alignLeftRight(`  Diskon/Item`, `-${formatCurrency(diskon)}`, cols));
+                const discountPercent = formatPercent(item?.discountPercent);
+                const discountLabel = discountPercent ? `  Disc ${discountPercent}` : "  Diskon/Item";
+                writeLine(alignLeftRight(discountLabel, `-${formatCurrency(diskon)}`, cols));
             }
         });
         separator();
@@ -281,7 +292,9 @@ function formatRawEscPos(invoiceData, template = null) {
 
             const diskon = Number(item?.discount ?? 0);
             if (diskon > 0) {
-                writeLine(alignLeftRight(`  Diskon/Item`, `-${formatCurrency(diskon)}`, cols));
+                const discountPercent = formatPercent(item?.discountPercent);
+                const discountLabel = discountPercent ? `  Disc ${discountPercent}` : "  Diskon/Item";
+                writeLine(alignLeftRight(discountLabel, `-${formatCurrency(diskon)}`, cols));
             }
         });
         separator();
@@ -349,7 +362,9 @@ function formatRawEscPos(invoiceData, template = null) {
         // DISKON
         const diskon = item?.discount ?? 0;
         if (diskon > 0) {
-            writeLine(alignLeftRight(`  Diskon/Item`, `-${formatCurrency(diskon)}`));
+            const discountPercent = formatPercent(item?.discountPercent);
+            const discountLabel = discountPercent ? `  Disc ${discountPercent}` : "  Diskon/Item";
+            writeLine(alignLeftRight(discountLabel, `-${formatCurrency(diskon)}`, cols));
         }
       });
       separator();

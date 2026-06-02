@@ -72,6 +72,15 @@ function formatInvoice(invoiceData, template = null) {
     );
   };
 
+  const formatPercent = (value) => {
+    const n = Number(value);
+    if (!Number.isFinite(n) || n <= 0) return "";
+    return `${new Intl.NumberFormat("id-ID", {
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 2,
+    }).format(n)}%`;
+  };
+
   // Builder line monospace yang aman dari kepotong kiri dan overflow kanan
   const lineText = (line, style = {}) => {
     const leftPad = nbsp.repeat(layout.leftPadCols);
@@ -290,8 +299,21 @@ function formatInvoice(invoiceData, template = null) {
       const qty = item?.qty ?? item?.quantity ?? 0;
       const price = item?.price ?? 0;
       const subtotal = item?.subtotal ?? Number(qty) * Number(price);
+      const discount = Number(item?.discount ?? 0);
+      const discountPercent = formatPercent(item?.discountPercent);
 
       add(itemLine(name, qty, price, subtotal));
+
+      if (discount > 0) {
+        const discountLabel = discountPercent
+          ? `Disc ${discountPercent}`
+          : "Diskon/Item";
+        add(
+          labelValue(discountLabel, `-${formatCurrency(discount)}`, {
+            fontSize: "11px",
+          })
+        );
+      }
     });
 
     add(separator());

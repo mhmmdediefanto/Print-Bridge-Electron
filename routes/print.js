@@ -635,7 +635,13 @@ router.post("/invoice", async (req, res) => {
     }
 
     // Check print type
-    const isEscpos = templateId?.includes('escpos') || templateId?.includes('dotmatrix') || printerName?.toLowerCase().includes('tm-u220');
+    const normalizedPrinterName = String(printerName || "").toLowerCase();
+    const isEscpos =
+      templateId?.includes("escpos") ||
+      templateId?.includes("dotmatrix") ||
+      normalizedPrinterName.includes("tm-u220") ||
+      normalizedPrinterName.includes("tmu220") ||
+      normalizedPrinterName.includes("u220");
 
     if (isEscpos) {
        logger.log("[route] POST /print/invoice -> Using ESC/POS Raw driver mode");
@@ -658,6 +664,7 @@ router.post("/invoice", async (req, res) => {
 
     // Default: electron-pos-printer Raster format
     const printData = formatInvoice(invoice, template);
+    const printOptions = getPrintOptions(template, printerName);
 
     logger.log("[route] POST /print/invoice -> Starting Raster print...", {
       printerName: printOptions.printerName || "(default)",

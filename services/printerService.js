@@ -328,6 +328,15 @@ function _checkUsbLinux(printerName, timeoutMs, resolve) {
       });
     }
 
+    if (output.includes("waiting for printer to become available")) {
+      return resolve({
+        online: false,
+        statusLabel: "Waiting",
+        isOffline: true,
+        reason: "Printer queue is waiting for device to become available",
+      });
+    }
+
     if (output.includes("idle") && output.includes("enabled")) {
       _checkUsbDeviceLinux(printerName, timeoutMs, (usbDetected) => {
         resolve({
@@ -363,29 +372,67 @@ function _checkUsbLinux(printerName, timeoutMs, resolve) {
 }
 
 function _checkUsbDeviceLinux(printerName, timeoutMs, callback) {
-  exec("lpinfo -v 2>&1", { timeout: timeoutMs }, (error, stdout) => {
-    if (error || !stdout) {
+  execFile(
+    "lpstat",
+    ["-v", printerName],
+    { timeout: timeoutMs },
+    (queueError, queueStdout, queueStderr) => {
+      const queueOutput = String(queueStdout || queueStderr || "").trim();
       logger.log(
-        "[printerService] _checkUsbDeviceLinux lpinfo failed:",
-        error?.message,
+        `[printerService] _checkUsbDeviceLinux lpstat -v: "${queueOutput}"`,
       );
-      return callback(false);
-    }
 
-    const output = stdout.toLowerCase();
-    logger.log(
-      `[printerService] _checkUsbDeviceLinux lpinfo: "${output.substring(0, 200)}..."`,
-    );
+      const queueUriMatch = queueOutput.match(/:\s*(\S+)\s*$/);
+      const queueUri = queueUriMatch ? queueUriMatch[1] : "";
 
-    const nameKey = printerName.toLowerCase().replace(/[^a-z0-9]/g, "");
-    const found = output
-      .split("\n")
-      .filter((line) => line.includes("usb://"))
-      .some((line) => {
-        const lineKey = line.toLowerCase().replace(/[^a-z0-9]/g, "");
-        return lineKey.includes(nameKey);
+      exec("lpinfo -v 2>&1", { timeout: timeoutMs }, (error, stdout) => {
+        if (error || !stdout) {
+          logger.log(
+            "[printerService] _checkUsbDeviceLinux lpinfo failed:",
+            error?.message,
+          );
+          return callback(false);
+        }
+
+        const output = stdout.toLowerCase();
+        logger.log(
+          `[printerService] _checkUsbDeviceLinux lpinfo: "${output.substring(0, 200)}..."`,
+        );
+
+        const usbLines = output
+          .split("\n")
+          .filter((line) => line.includes("usb://"));
+
+        const normalizeKey = (value) => {
+          try {
+            return decodeURIComponent(String(value || ""))
+              .toLowerCase()
+              .replace(/[^a-z0-9]/g, "");
+          } catch (_) {
+            return String(value || "")
+              .toLowerCase()
+              .replace(/[^a-z0-9]/g, "");
+          }
+        };
+
+        // Prefer CUPS device URI over queue name. Queue name often differs
+        // from the USB URI, which causes stale or incorrect status changes.
+        if (!queueError && queueUri.toLowerCase().startsWith("usb://")) {
+          const queueUriKey = normalizeKey(queueUri);
+          const foundByUri = usbLines.some((line) =>
+            normalizeKey(line).includes(queueUriKey),
+          );
+          return callback(foundByUri);
+        }
+
+        // Fallback for non-USB queues or incomplete lpstat -v output.
+        const nameKey = normalizeKey(printerName);
+        const foundByName = usbLines.some((line) =>
+          normalizeKey(line).includes(nameKey),
+        );
+
+        callback(foundByName);
       });
-
-    callback(found);
-  });
+    },
+  );
 }
